@@ -5,7 +5,7 @@ enum QuotaCoreTestRunner {
     static func main() {
         var passed = 0
 
-        // 1. Test Claude Usage Parsing
+        // 1. Test Claude Usage Parsing (including weekly_scoped_shares and shared 5h on Fable)
         do {
             let json = """
             {
@@ -19,16 +19,35 @@ enum QuotaCoreTestRunner {
               },
               "limits": [
                 {
+                  "kind": "session",
+                  "group": "session",
+                  "percent": 12.5,
+                  "resets_at": "2026-11-14T00:00:00+00:00"
+                },
+                {
+                  "kind": "weekly_all",
+                  "group": "weekly",
+                  "percent": 30.0,
+                  "resets_at": "2026-11-19T11:00:00+00:00"
+                },
+                {
                   "kind": "weekly_scoped",
                   "group": "weekly",
-                  "percent": 15,
+                  "percent": 8,
                   "resets_at": "2026-11-19T11:00:00+00:00",
                   "scope": {
                     "model": {
                       "id": null,
-                      "display_name": "Opus"
+                      "display_name": "Fable"
                     }
                   }
+                }
+              ],
+              "weekly_scoped_shares": [
+                {
+                  "limit_index": 2,
+                  "used_percent_of_weekly": 4,
+                  "allowance_percent_of_weekly": 50
                 }
               ]
             }
@@ -39,13 +58,18 @@ enum QuotaCoreTestRunner {
             precondition(metrics.count == 3, "Expected 3 Claude metrics")
             precondition(abs(metrics[0].remainingPercent - 87.5) < 0.01, "Expected 87.5% remaining on 5h")
             precondition(abs(metrics[1].remainingPercent - 70.0) < 0.01, "Expected 70.0% remaining on 7d")
-            precondition(abs(metrics[2].remainingPercent - 85.0) < 0.01, "Expected 85.0% remaining on Opus")
+            precondition(abs(metrics[2].remainingPercent - 92.0) < 0.01, "Expected 92.0% remaining on Fable")
+            precondition(metrics[2].weeklyAllowancePercentOfGeneral == 50, "Expected 50% allowance share on Fable")
+            precondition(metrics[2].weeklyUsedPercentOfGeneral == 4, "Expected 4% used share on Fable")
 
             let claudeSnap = ProviderQuotaSnapshot(provider: .claude, authState: .authenticated, metrics: metrics)
             let claudePools = claudeSnap.pools
-            precondition(claudePools.count == 2, "Expected 2 Claude pools (Pool General + Pool Opus)")
+            precondition(claudePools.count == 2, "Expected 2 Claude pools (Pool General + Pool Exclusivo)")
+            precondition(claudePools[0].category == .core && claudePools[0].title == "Pool General", "Expected Pool General first")
             precondition(claudePools[0].burst5hMetric != nil && claudePools[0].weekly7dMetric != nil, "Expected General pool to have both 5h and 7d")
-            precondition(claudePools[1].category == .dedicated && claudePools[1].weekly7dMetric != nil, "Expected Opus pool to be dedicated 7d")
+            precondition(claudePools[1].category == .dedicated && claudePools[1].title == "Pool Exclusivo", "Expected Pool Exclusivo second")
+            precondition(claudePools[1].sharingArchitecture == .shared5hAndScopedWeekly, "Expected Fable pool to have shared5hAndScopedWeekly architecture")
+            precondition(claudePools[1].sharedBurst5hMetric?.remainingPercent == 87.5, "Expected Fable pool to link shared 5h metric from General Pool")
             passed += 1
         } catch {
             fatalError("Claude test failed: \(error)")
@@ -202,32 +226,46 @@ enum QuotaCoreTestRunner {
             let summaryDecoded = try JSONDecoder().decode(GeminiProviderClient.RetrieveUserQuotaSummaryResponse.self, from: agySummaryJson)
             let agyDecoded = try JSONDecoder().decode(GeminiProviderClient.FetchAvailableModelsResponse.self, from: agyModelsJson)
             let agyMetrics = GeminiProviderClient.parseAntigravityMetrics(summary: summaryDecoded, modelsResponse: agyDecoded)
-            precondition(agyMetrics.count == 5, "Expected 5 AGY pool metrics (Argon 7d + Gemini 5h/7d + Claude/GPT-OSS 5h/7d)")
-            precondition(agyMetrics[0].label.contains("Argon"), "Expected Argon in first pool label")
-            precondition(abs(agyMetrics[0].remainingPercent - 49.7) < 0.01, "Expected 49.7% remaining on Argon 7d")
-            precondition(agyMetrics[1].label.contains("Hydrogen"), "Expected Hydrogen in Gemini 5h pool label")
-            precondition(abs(agyMetrics[1].remainingPercent - 84.0) < 0.01, "Expected 84% remaining on Gemini 5h")
-            precondition(abs(agyMetrics[2].remainingPercent - 60.0) < 0.01, "Expected 60% remaining on Gemini 7d")
-            precondition(agyMetrics[3].label.contains("GPT-OSS"), "Expected Claude & GPT-OSS in 3P 5h pool label")
+            precondition(agyMetrics.count == 5, "Expected 5 AGY pool metrics (Gemini 5h/7d + Argon 7d + Claude/GPT-OSS 5h/7d)")
+            precondition(agyMetrics[0].label.contains("Hydrogen"), "Expected Hydrogen in first (Pool General) 5h label")
+            precondition(abs(agyMetrics[0].remainingPercent - 84.0) < 0.01, "Expected 84% remaining on Gemini 5h")
+            precondition(abs(agyMetrics[1].remainingPercent - 60.0) < 0.01, "Expected 60% remaining on Gemini 7d")
+            precondition(agyMetrics[2].label.contains("Argon"), "Expected Argon in second (Pool Exclusivo) label")
+            precondition(abs(agyMetrics[2].remainingPercent - 49.7) < 0.01, "Expected 49.7% remaining on Argon 7d")
+            precondition(agyMetrics[3].label.contains("GPT-OSS"), "Expected Claude & GPT-OSS in third (Pool de Partners) 5h label")
             precondition(abs(agyMetrics[3].remainingPercent - 95.0) < 0.01, "Expected 95% remaining on 3P 5h")
             precondition(abs(agyMetrics[4].remainingPercent - 100.0) < 0.01, "Expected 100% remaining on 3P 7d")
 
             let agySnap = ProviderQuotaSnapshot(provider: .gemini, authState: .authenticated, metrics: agyMetrics)
             let agyPools = agySnap.pools
-            precondition(agyPools.count == 3, "Expected 3 AGY pools (Argon + Pool General + Claude 5.5 & GPT-OSS)")
-            precondition(agyPools[0].id == "agy-argon" && agyPools[0].category == .dedicated, "Expected Argon dedicated pool first")
-            precondition(agyPools[1].id == "agy-gemini" && agyPools[1].title == "Pool General" && agyPools[1].burst5hMetric != nil && agyPools[1].weekly7dMetric != nil, "Expected Pool General with 5h + 7d")
-            precondition(agyPools[2].id == "agy-3p" && agyPools[2].category == .partner, "Expected 3P partner pool")
+            precondition(agyPools.count == 3, "Expected 3 AGY pools (Pool General + Pool Exclusivo + Pool de Partners)")
+            precondition(agyPools[0].id == "agy-gemini" && agyPools[0].category == .core && agyPools[0].title == "Pool General" && agyPools[0].burst5hMetric != nil && agyPools[0].weekly7dMetric != nil, "Expected Pool General (.core) first with 5h + 7d")
+            precondition(agyPools[1].id == "agy-argon" && agyPools[1].category == .dedicated && agyPools[1].title == "Pool Exclusivo" && agyPools[1].sharingArchitecture == .independentWeeklyOnly, "Expected Pool Exclusivo (.dedicated) second with independentWeeklyOnly")
+            precondition(agyPools[2].id == "agy-3p" && agyPools[2].category == .partner && agyPools[2].title == "Pool de Partners", "Expected Pool de Partners (.partner) third")
 
-            // Test QuotaDisplayMode formatting (including .both and translations)
-            let m = agyMetrics[1]
+            // Test QuotaDisplayMode & SummaryWindowMode formatting
+            let m = agyMetrics[0]
             precondition(QuotaDisplayMode.remaining.format(metric: m, language: .es) == "84% disp.", "Expected 84% disp.")
             precondition(QuotaDisplayMode.used.format(metric: m, language: .es) == "16% usado", "Expected 16% usado")
             precondition(QuotaDisplayMode.both.format(metric: m, language: .es) == "84% disp. · 16% usado", "Expected 84% disp. · 16% usado")
             precondition(QuotaDisplayMode.both.formatMenuBarPercent(remainingPercent: 84) == "84% (16%u)", "Expected 84% (16%u) in menu bar for .both")
+
+            let prefs5h = QuotaPreferencesData(summaryWindowMode: .fiveHourOnly)
+            let prefs5hAnd7dInline = QuotaPreferencesData(summaryWindowMode: .fiveHourAndSevenDay, dualWindowLayoutStyle: .inlineDot)
+            let prefs5hAnd7dParen = QuotaPreferencesData(summaryWindowMode: .fiveHourAndSevenDay, dualWindowLayoutStyle: .parentheses7d)
+            let prefs5hAnd7dSub = QuotaPreferencesData(summaryWindowMode: .fiveHourAndSevenDay, dualWindowLayoutStyle: .subscripts)
+            let prefs5hAnd7dPills = QuotaPreferencesData(summaryWindowMode: .fiveHourAndSevenDay, dualWindowLayoutStyle: .capsulePills)
+            let prefsPartner = QuotaPreferencesData(summaryWindowMode: .fiveHourAndSevenDay, dualWindowLayoutStyle: .inlineDot, preferredPoolByProvider: ["gemini": .partner])
+            precondition(prefs5h.formatProviderSummary(snapshot: agySnap, compactMenuBar: true)?.text == "84%", "Expected 84% for Gemini Pool General in 5h-only mode")
+            precondition(prefs5hAnd7dInline.formatProviderSummary(snapshot: agySnap, compactMenuBar: true)?.text == "84% 5h · 60% 7d", "Expected 84% 5h · 60% 7d for inlineDot mode")
+            precondition(prefs5hAnd7dParen.formatProviderSummary(snapshot: agySnap, compactMenuBar: true)?.text == "84% (60% 7d)", "Expected 84% (60% 7d) for parentheses7d mode")
+            precondition(prefs5hAnd7dSub.formatProviderSummary(snapshot: agySnap, compactMenuBar: true)?.text == "84%₅ₕ 60%₇𝒹", "Expected 84%₅ₕ 60%₇𝒹 for subscripts mode")
+            precondition(prefs5hAnd7dPills.formatProviderSummary(snapshot: agySnap, compactMenuBar: true)?.text == "84% · 60%", "Expected 84% · 60% for capsulePills mode")
+            precondition(prefsPartner.formatProviderSummary(snapshot: agySnap, compactMenuBar: true)?.text == "95% 5h · 100% 7d", "Expected 95% 5h · 100% 7d when Pool de Partners is selected for Gemini")
+
             precondition(L10n.generalPoolTitle(.de) == "Allgemeiner Pool", "Expected German translation for General Pool")
-            precondition(L10n.generalPoolTitle(.it) == "Pool Generale", "Expected Italian translation for General Pool")
-            precondition(L10n.generalPoolTitle(.pt) == "Pool Geral", "Expected Portuguese translation for General Pool")
+            precondition(L10n.exclusivePoolTitle(.es) == "Pool Exclusivo", "Expected Spanish translation for Exclusive Pool")
+            precondition(L10n.partnerPoolTitle(.es) == "Pool de Partners", "Expected Spanish translation for Partner Pool")
             passed += 1
         } catch {
             fatalError("Gemini test failed: \(error)")
