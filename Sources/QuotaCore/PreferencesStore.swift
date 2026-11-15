@@ -49,6 +49,54 @@ public enum QuotaDisplayMode: String, Codable, CaseIterable, Identifiable, Senda
     }
 }
 
+public enum SummaryWindowMode: String, Codable, CaseIterable, Identifiable, Sendable {
+    /// Muestra únicamente el porcentaje de la ventana inmediata de 5 horas (o 7d si el pool solo tiene ventana semanal).
+    case fiveHourOnly = "fiveHourOnly"
+    /// Muestra tanto el porcentaje de la ventana de 5 horas como el de la cuota semanal de 7 días (5h + 7d).
+    case fiveHourAndSevenDay = "fiveHourAndSevenDay"
+
+    public var id: String { rawValue }
+
+    public func localizedTitle(_ lang: AppLanguage) -> String {
+        L10n.summaryWindowModeTitle(self, lang)
+    }
+}
+
+/// Estilo de visualización cuando se muestra simultáneamente la ventana de 5h y la cuota de 7d (5h + 7d).
+public enum DualWindowLayoutStyle: String, Codable, CaseIterable, Identifiable, Sendable {
+    /// Opción 1: Dos líneas apiladas (2 pisos) por cada IA (arriba 79% 5h, abajo 34% 7d).
+    case stackedTwoLines = "stackedTwoLines"
+    /// Opción 2A: En una línea con el 7d entre paréntesis: ✳︎ 79% (34% 7d) · ⬢ 95% (78% 7d).
+    case parentheses7d = "parentheses7d"
+    /// Opción 2B: En una línea con subíndices y barra vertical entre IAs: ✳︎ 79%₅ₕ 34%₇𝒹 │ ⬢ 95%₅ₕ 78%₇𝒹.
+    case subscripts = "subscripts"
+    /// Opción 3: Mini cápsulas (Pills) por IA: [ ✳︎ 79% · 34% ] [ ⬢ 95% · 78% ].
+    case capsulePills = "capsulePills"
+    /// Opción 4: En línea clásica con punto intermedio: ✳︎ 79% 5h · 34% 7d.
+    case inlineDot = "inlineDot"
+
+    public var id: String { rawValue }
+
+    public func localizedTitle(_ lang: AppLanguage) -> String {
+        L10n.dualWindowLayoutStyleTitle(self, lang)
+    }
+}
+
+/// Componentes estructurados del resumen de un proveedor para renderizarlo en 1 línea, 2 pisos o cápsula.
+public struct ProviderSummaryTokens: Equatable, Sendable {
+    public let provider: AIProviderKind
+    public let burst5hText: String?
+    public let burst5hRemaining: Double?
+    public let weekly7dText: String?
+    public let weekly7dRemaining: Double?
+    public let singleText: String
+    public let statusRemainingPercent: Double
+
+    public var isDualWindow: Bool {
+        burst5hText != nil && weekly7dText != nil
+    }
+}
+
 public enum MenuBarDisplayStyle: String, Codable, CaseIterable, Identifiable, Sendable {
     case logosAndPercentages = "logosAndPercentages"
     case compactInitials = "compactInitials"
@@ -72,6 +120,9 @@ public struct QuotaPreferencesData: Codable, Equatable, Sendable {
     public var menuBarProviders: [AIProviderKind]
     public var menuBarStyle: MenuBarDisplayStyle
     public var quotaDisplayMode: QuotaDisplayMode
+    public var summaryWindowMode: SummaryWindowMode
+    public var dualWindowLayoutStyle: DualWindowLayoutStyle
+    public var preferredPoolByProvider: [String: QuotaPoolCategory]
     public var language: AppLanguage
     public var launchAtLogin: Bool
 
@@ -80,6 +131,9 @@ public struct QuotaPreferencesData: Codable, Equatable, Sendable {
         menuBarProviders: [AIProviderKind] = AIProviderKind.allCases,
         menuBarStyle: MenuBarDisplayStyle = .logosAndPercentages,
         quotaDisplayMode: QuotaDisplayMode = .remaining,
+        summaryWindowMode: SummaryWindowMode = .fiveHourOnly,
+        dualWindowLayoutStyle: DualWindowLayoutStyle = .stackedTwoLines,
+        preferredPoolByProvider: [String: QuotaPoolCategory] = [:],
         language: AppLanguage = .es,
         launchAtLogin: Bool = false
     ) {
@@ -87,12 +141,17 @@ public struct QuotaPreferencesData: Codable, Equatable, Sendable {
         self.menuBarProviders = menuBarProviders
         self.menuBarStyle = menuBarStyle
         self.quotaDisplayMode = quotaDisplayMode
+        self.summaryWindowMode = summaryWindowMode
+        self.dualWindowLayoutStyle = dualWindowLayoutStyle
+        self.preferredPoolByProvider = preferredPoolByProvider
         self.language = language
         self.launchAtLogin = launchAtLogin
     }
 
     enum CodingKeys: String, CodingKey {
-        case visibleProviders, menuBarProviders, menuBarStyle, quotaDisplayMode, language, launchAtLogin
+        case visibleProviders, menuBarProviders, menuBarStyle, quotaDisplayMode
+        case summaryWindowMode, dualWindowLayoutStyle, preferredPoolByProvider
+        case language, launchAtLogin
     }
 
     public init(from decoder: Decoder) throws {
@@ -101,8 +160,119 @@ public struct QuotaPreferencesData: Codable, Equatable, Sendable {
         self.menuBarProviders = try container.decodeIfPresent([AIProviderKind].self, forKey: .menuBarProviders) ?? AIProviderKind.allCases
         self.menuBarStyle = try container.decodeIfPresent(MenuBarDisplayStyle.self, forKey: .menuBarStyle) ?? .logosAndPercentages
         self.quotaDisplayMode = try container.decodeIfPresent(QuotaDisplayMode.self, forKey: .quotaDisplayMode) ?? .remaining
+        self.summaryWindowMode = try container.decodeIfPresent(SummaryWindowMode.self, forKey: .summaryWindowMode) ?? .fiveHourOnly
+        self.dualWindowLayoutStyle = try container.decodeIfPresent(DualWindowLayoutStyle.self, forKey: .dualWindowLayoutStyle) ?? .stackedTwoLines
+        self.preferredPoolByProvider = try container.decodeIfPresent([String: QuotaPoolCategory].self, forKey: .preferredPoolByProvider) ?? [:]
         self.language = try container.decodeIfPresent(AppLanguage.self, forKey: .language) ?? .es
         self.launchAtLogin = try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? false
+    }
+
+    /// Categorías de Pool seleccionables para cada proveedor.
+    public static func selectablePools(for provider: AIProviderKind) -> [QuotaPoolCategory] {
+        switch provider {
+        case .claude:
+            return [.core, .dedicated]
+        case .codex:
+            return [.core]
+        case .gemini:
+            return [.core, .dedicated, .partner]
+        }
+    }
+
+    public func preferredPoolCategory(for provider: AIProviderKind) -> QuotaPoolCategory {
+        if let saved = preferredPoolByProvider[provider.rawValue],
+           Self.selectablePools(for: provider).contains(saved) {
+            return saved
+        }
+        return .core
+    }
+
+    /// Devuelve los tokens estructurados del resumen de un proveedor (5h y 7d por separado más el texto formateado).
+    public func summaryTokens(for snapshot: ProviderQuotaSnapshot, compactMenuBar: Bool = true) -> ProviderSummaryTokens? {
+        guard snapshot.authState == .authenticated,
+              let targetPool = snapshot.pool(for: preferredPoolCategory(for: snapshot.provider)) else {
+            return nil
+        }
+
+        let burst = targetPool.effective5hMetric
+        let weekly = targetPool.weekly7dMetric
+
+        switch summaryWindowMode {
+        case .fiveHourOnly:
+            guard let metric = targetPool.primaryMetric else { return nil }
+            let text = compactMenuBar
+                ? quotaDisplayMode.formatMenuBarPercent(remainingPercent: metric.remainingPercent)
+                : quotaDisplayMode.format(metric: metric, compact: true, language: language)
+            return ProviderSummaryTokens(
+                provider: snapshot.provider,
+                burst5hText: metric.windowKind == .burst5h ? text : nil,
+                burst5hRemaining: metric.windowKind == .burst5h ? metric.remainingPercent : nil,
+                weekly7dText: metric.windowKind == .weekly7d ? text : nil,
+                weekly7dRemaining: metric.windowKind == .weekly7d ? metric.remainingPercent : nil,
+                singleText: text,
+                statusRemainingPercent: metric.remainingPercent
+            )
+
+        case .fiveHourAndSevenDay:
+            if let burst, let weekly {
+                let bStr = quotaDisplayMode.formatMenuBarPercent(remainingPercent: burst.remainingPercent)
+                let wStr = quotaDisplayMode.formatMenuBarPercent(remainingPercent: weekly.remainingPercent)
+                let minRem = min(burst.remainingPercent, weekly.remainingPercent)
+                let formatted: String
+                switch dualWindowLayoutStyle {
+                case .stackedTwoLines:
+                    formatted = "\(bStr) 5h · \(wStr) 7d"
+                case .parentheses7d:
+                    formatted = "\(bStr) (\(wStr) 7d)"
+                case .subscripts:
+                    formatted = "\(bStr)₅ₕ \(wStr)₇𝒹"
+                case .capsulePills:
+                    formatted = "\(bStr) · \(wStr)"
+                case .inlineDot:
+                    formatted = "\(bStr) 5h · \(wStr) 7d"
+                }
+                return ProviderSummaryTokens(
+                    provider: snapshot.provider,
+                    burst5hText: bStr,
+                    burst5hRemaining: burst.remainingPercent,
+                    weekly7dText: wStr,
+                    weekly7dRemaining: weekly.remainingPercent,
+                    singleText: formatted,
+                    statusRemainingPercent: minRem
+                )
+            } else if let only = burst ?? weekly ?? targetPool.primaryMetric {
+                let wStr = quotaDisplayMode.formatMenuBarPercent(remainingPercent: only.remainingPercent)
+                let isWeekly = only.windowKind == .weekly7d
+                let formatted: String
+                switch dualWindowLayoutStyle {
+                case .subscripts:
+                    formatted = isWeekly ? "\(wStr)₇𝒹" : "\(wStr)₅ₕ"
+                default:
+                    formatted = isWeekly ? "\(wStr) 7d" : "\(wStr) 5h"
+                }
+                return ProviderSummaryTokens(
+                    provider: snapshot.provider,
+                    burst5hText: isWeekly ? nil : wStr,
+                    burst5hRemaining: isWeekly ? nil : only.remainingPercent,
+                    weekly7dText: isWeekly ? wStr : nil,
+                    weekly7dRemaining: isWeekly ? only.remainingPercent : nil,
+                    singleText: formatted,
+                    statusRemainingPercent: only.remainingPercent
+                )
+            }
+            return nil
+        }
+    }
+
+    /// Formatea el porcentaje resumen de un proveedor según el Pool elegido, la opción de ventana (Solo 5h vs 5h + 7d) y el estilo dual.
+    public func formatProviderSummary(
+        snapshot: ProviderQuotaSnapshot,
+        compactMenuBar: Bool
+    ) -> (text: String, statusRemainingPercent: Double)? {
+        guard let tokens = summaryTokens(for: snapshot, compactMenuBar: compactMenuBar) else {
+            return nil
+        }
+        return (tokens.singleText, tokens.statusRemainingPercent)
     }
 }
 
@@ -183,6 +353,16 @@ public final class PreferencesStore: ObservableObject {
             list.removeAll { $0 == kind }
         }
         data.menuBarProviders = AIProviderKind.allCases.filter { list.contains($0) }
+    }
+
+    public func preferredPoolCategory(for provider: AIProviderKind) -> QuotaPoolCategory {
+        data.preferredPoolCategory(for: provider)
+    }
+
+    public func setPreferredPoolCategory(_ category: QuotaPoolCategory, for provider: AIProviderKind) {
+        var map = data.preferredPoolByProvider
+        map[provider.rawValue] = category
+        data.preferredPoolByProvider = map
     }
 
     public func setLaunchAtLogin(_ enabled: Bool) {

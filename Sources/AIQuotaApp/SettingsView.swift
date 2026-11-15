@@ -110,7 +110,70 @@ struct SettingsPanelView: View {
                         }
                     }
 
-                    // Section 4: Modo de porcentaje (% Disponible vs % Usado vs Ambos)
+                    // Section 4: Selección de Ventana (5h vs 5h + 7d) y Pool por IA
+                    settingsCard(title: L10n.summaryWindowSectionTitle(lang), icon: "clock.badge.checkmark") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Picker("SummaryWindow", selection: $preferences.data.summaryWindowMode) {
+                                ForEach(SummaryWindowMode.allCases) { winMode in
+                                    Text(winMode.localizedTitle(lang)).tag(winMode)
+                                }
+                            }
+                            .labelsHidden()
+                            .controlSize(.small)
+
+                            if preferences.data.summaryWindowMode == .fiveHourAndSevenDay {
+                                Text(L10n.dualWindowLayoutStyleLabel(lang))
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .padding(.top, 2)
+
+                                Picker("DualWindowStyle", selection: $preferences.data.dualWindowLayoutStyle) {
+                                    ForEach(DualWindowLayoutStyle.allCases) { layoutStyle in
+                                        Text(layoutStyle.localizedTitle(lang)).tag(layoutStyle)
+                                    }
+                                }
+                                .labelsHidden()
+                                .controlSize(.small)
+                            }
+
+                            Divider()
+
+                            Text(L10n.preferredPoolSectionTitle(lang))
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.secondary)
+
+                            Text(L10n.preferredPoolSectionHint(lang))
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+
+                            ForEach(AIProviderKind.allCases) { kind in
+                                let poolOptions = QuotaPreferencesData.selectablePools(for: kind)
+                                HStack(spacing: 8) {
+                                    ProviderBrandLogoView(provider: kind, size: 16)
+                                    Text(kind.displayName)
+                                        .font(.caption.weight(.semibold))
+                                        .frame(width: 54, alignment: .leading)
+
+                                    Picker(
+                                        kind.displayName,
+                                        selection: Binding(
+                                            get: { preferences.preferredPoolCategory(for: kind) },
+                                            set: { preferences.setPreferredPoolCategory($0, for: kind) }
+                                        )
+                                    ) {
+                                        ForEach(poolOptions) { cat in
+                                            Text(L10n.providerPoolOptionLabel(provider: kind, category: cat, lang))
+                                                .tag(cat)
+                                        }
+                                    }
+                                    .labelsHidden()
+                                    .controlSize(.small)
+                                }
+                            }
+                        }
+                    }
+
+                    // Section 5: Modo de porcentaje (% Disponible vs % Usado vs Ambos)
                     settingsCard(title: L10n.percentageModeSectionTitle(lang), icon: "percent") {
                         VStack(alignment: .leading, spacing: 6) {
                             Picker("Mode", selection: $preferences.data.quotaDisplayMode) {

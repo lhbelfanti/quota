@@ -98,11 +98,14 @@ struct QuotaTimelineProvider: TimelineProvider {
                         QuotaMetric(
                             id: "claude-scoped-fable",
                             label: "Fable (7d)",
-                            usedPercent: 0,
+                            usedPercent: 8,
                             poolId: "claude-fable",
-                            poolTitle: "Pool Fable",
+                            poolTitle: "Pool Exclusivo",
+                            poolSubtitle: "Claude Fable",
                             poolCategory: .dedicated,
-                            windowKind: .weekly7d
+                            windowKind: .weekly7d,
+                            weeklyAllowancePercentOfGeneral: 50,
+                            weeklyUsedPercentOfGeneral: 4
                         )
                     ]
                 ),
@@ -118,6 +121,7 @@ struct QuotaTimelineProvider: TimelineProvider {
                             usedPercent: 5,
                             poolId: "codex-general",
                             poolTitle: "Pool General",
+                            poolSubtitle: "GPT-5 · o3 · Codex CLI",
                             poolCategory: .core,
                             windowKind: .burst5h
                         ),
@@ -127,6 +131,7 @@ struct QuotaTimelineProvider: TimelineProvider {
                             usedPercent: 18,
                             poolId: "codex-general",
                             poolTitle: "Pool General",
+                            poolSubtitle: "GPT-5 · o3 · Codex CLI",
                             poolCategory: .core,
                             windowKind: .weekly7d
                         )
@@ -139,30 +144,33 @@ struct QuotaTimelineProvider: TimelineProvider {
                     planTier: "AI PRO",
                     metrics: [
                         QuotaMetric(
-                            id: "agy-gemini-argon-wtu-weekly",
-                            label: "Gemini 4 Argon · Orchestrator (7d)",
-                            usedPercent: 50,
-                            poolId: "agy-argon",
-                            poolTitle: "Pool Gemini 4 Argon",
-                            poolCategory: .dedicated,
-                            windowKind: .weekly7d
-                        ),
-                        QuotaMetric(
                             id: "agy-gemini-5h",
                             label: "Gemini Hydrogen / 3.8 Flash / Pro (5h)",
-                            usedPercent: 29,
+                            usedPercent: 1,
                             poolId: "agy-gemini",
                             poolTitle: "Pool General",
+                            poolSubtitle: "Gemini 4 Hydrogen · Gemini 3.8 Flash · Gemini 2.5 Pro",
                             poolCategory: .core,
                             windowKind: .burst5h
                         ),
                         QuotaMetric(
                             id: "agy-gemini-weekly",
                             label: "Gemini Hydrogen / 3.8 Flash / Pro (7d)",
-                            usedPercent: 44,
+                            usedPercent: 13,
                             poolId: "agy-gemini",
                             poolTitle: "Pool General",
+                            poolSubtitle: "Gemini 4 Hydrogen · Gemini 3.8 Flash · Gemini 2.5 Pro",
                             poolCategory: .core,
+                            windowKind: .weekly7d
+                        ),
+                        QuotaMetric(
+                            id: "agy-gemini-argon-wtu-weekly",
+                            label: "Gemini 4 Argon · Orchestrator (7d)",
+                            usedPercent: 44,
+                            poolId: "agy-argon",
+                            poolTitle: "Pool Exclusivo",
+                            poolSubtitle: "Gemini 4 Argon (Low / Med / High) · Orchestrator",
+                            poolCategory: .dedicated,
                             windowKind: .weekly7d
                         ),
                         QuotaMetric(
@@ -170,16 +178,18 @@ struct QuotaTimelineProvider: TimelineProvider {
                             label: "Claude 5.5 & GPT-OSS 120B (5h)",
                             usedPercent: 0,
                             poolId: "agy-3p",
-                            poolTitle: "Pool Claude 5.5 & GPT-OSS 120B",
+                            poolTitle: "Pool de Partners",
+                            poolSubtitle: "Claude Opus 5.5 · Claude Sonnet 5.5 · GPT-OSS 120B",
                             poolCategory: .partner,
                             windowKind: .burst5h
                         ),
                         QuotaMetric(
                             id: "agy-3p-weekly",
                             label: "Claude 5.5 & GPT-OSS 120B (7d)",
-                            usedPercent: 0,
+                            usedPercent: 12,
                             poolId: "agy-3p",
-                            poolTitle: "Pool Claude 5.5 & GPT-OSS 120B",
+                            poolTitle: "Pool de Partners",
+                            poolSubtitle: "Claude Opus 5.5 · Claude Sonnet 5.5 · GPT-OSS 120B",
                             poolCategory: .partner,
                             windowKind: .weekly7d
                         )
@@ -242,11 +252,10 @@ struct AIQuotaWidgetEntryView: View {
                     ProviderBrandLogoView(provider: kind, size: 15)
                     Text(kind.displayName)
                         .font(.caption2.weight(.semibold))
-                    Spacer()
-                    if let pct = snap.primaryRemainingPercent {
-                        Text(entry.preferences.quotaDisplayMode.formatMenuBarPercent(remainingPercent: pct))
-                            .font(.caption2.monospacedDigit().bold())
-                            .foregroundStyle(QuotaUITheme.statusColor(remainingPercent: pct))
+                        .lineLimit(1)
+                    Spacer(minLength: 2)
+                    if let tokens = entry.preferences.summaryTokens(for: snap, compactMenuBar: true) {
+                        widgetCompactSummaryBadge(tokens: tokens, isSmallWidget: true)
                     } else {
                         Text("—")
                             .font(.caption2)
@@ -271,7 +280,9 @@ struct AIQuotaWidgetEntryView: View {
                 ForEach(entry.preferences.visibleProviders) { kind in
                     let snap = entry.dashboard.snapshot(for: kind)
                     let color = QuotaUITheme.providerColor(kind)
-                    VStack(alignment: .leading, spacing: 5) {
+                    let selectedCategory = entry.preferences.preferredPoolCategory(for: kind)
+                    let selectedPool = snap.pool(for: selectedCategory)
+                    VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 5) {
                             ProviderBrandLogoView(provider: kind, size: 16)
                             Text(kind.displayName)
@@ -280,14 +291,19 @@ struct AIQuotaWidgetEntryView: View {
                             Spacer(minLength: 0)
                         }
 
-                        if let firstPool = snap.pools.first, snap.authState == .authenticated {
-                            if let primary = firstPool.primaryMetric {
-                                Text(entry.preferences.quotaDisplayMode.format(metric: primary, compact: true, language: lang))
-                                    .font(.caption.monospacedDigit().bold())
-                                    .foregroundStyle(QuotaUITheme.statusColor(remainingPercent: primary.remainingPercent))
+                        if snap.authState == .authenticated,
+                           let tokens = entry.preferences.summaryTokens(for: snap, compactMenuBar: false) {
+                            widgetCompactSummaryBadge(tokens: tokens, isSmallWidget: false)
+
+                            if let selectedPool {
+                                Text(L10n.poolTitle(for: selectedPool.id, category: selectedPool.category, fallback: selectedPool.title, lang))
+                                    .font(.system(size: 8.5, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
                             }
+
                             Text(L10n.activePoolsCount(snap.pools.count, lang))
-                                .font(.system(size: 8.5, weight: .medium))
+                                .font(.system(size: 8, weight: .medium))
                                 .foregroundStyle(color)
                                 .lineLimit(1)
                         } else {
@@ -306,8 +322,81 @@ struct AIQuotaWidgetEntryView: View {
         .containerBackground(.fill.tertiary, for: .widget)
     }
 
+    @ViewBuilder
+    private func widgetCompactSummaryBadge(tokens: ProviderSummaryTokens, isSmallWidget: Bool) -> some View {
+        let style = entry.preferences.dualWindowLayoutStyle
+        let mainStatusColor = QuotaUITheme.statusColor(remainingPercent: tokens.statusRemainingPercent)
+
+        if entry.preferences.summaryWindowMode == .fiveHourAndSevenDay,
+           let bText = tokens.burst5hText,
+           let wText = tokens.weekly7dText {
+            let bColor = QuotaUITheme.statusColor(remainingPercent: tokens.burst5hRemaining ?? tokens.statusRemainingPercent)
+            let wColor = QuotaUITheme.statusColor(remainingPercent: tokens.weekly7dRemaining ?? tokens.statusRemainingPercent)
+
+            switch style {
+            case .stackedTwoLines:
+                if isSmallWidget {
+                    VStack(alignment: .trailing, spacing: -1) {
+                        Text("\(bText) 5h")
+                            .font(.system(size: 9.5, weight: .bold, design: .rounded).monospacedDigit())
+                            .foregroundStyle(bColor)
+                        Text("\(wText) 7d")
+                            .font(.system(size: 8, weight: .medium, design: .rounded).monospacedDigit())
+                            .foregroundStyle(wColor.opacity(0.85))
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(alignment: .firstTextBaseline, spacing: 3) {
+                            Text(bText)
+                                .font(.system(size: 12.5, weight: .heavy, design: .rounded).monospacedDigit())
+                                .foregroundStyle(bColor)
+                            Text("5h")
+                                .font(.system(size: 8.5, weight: .semibold, design: .rounded))
+                                .foregroundStyle(.secondary)
+                        }
+                        HStack(alignment: .firstTextBaseline, spacing: 3) {
+                            Text(wText)
+                                .font(.system(size: 10, weight: .bold, design: .rounded).monospacedDigit())
+                                .foregroundStyle(wColor.opacity(0.9))
+                            Text("7d")
+                                .font(.system(size: 8, weight: .medium, design: .rounded))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            case .capsulePills:
+                HStack(spacing: 3) {
+                    Text(bText)
+                        .font(.system(size: isSmallWidget ? 9.5 : 10.5, weight: .bold, design: .rounded).monospacedDigit())
+                        .foregroundStyle(bColor)
+                    Text("·")
+                        .font(.system(size: 8.5, weight: .bold))
+                        .foregroundStyle(.secondary)
+                    Text(wText)
+                        .font(.system(size: isSmallWidget ? 9 : 10, weight: .semibold, design: .rounded).monospacedDigit())
+                        .foregroundStyle(wColor.opacity(0.9))
+                }
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1.5)
+                .background(Color.primary.opacity(0.08), in: Capsule())
+            default:
+                Text(tokens.singleText)
+                    .font(.system(size: isSmallWidget ? 9.5 : 10.5, weight: .bold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(mainStatusColor)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
+        } else {
+            Text(tokens.singleText)
+                .font(.system(size: isSmallWidget ? 10.5 : 12, weight: .bold, design: .rounded).monospacedDigit())
+                .foregroundStyle(mainStatusColor)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+    }
+
     private var largeView: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 5) {
             HStack {
                 Text("AI Quota Monitor")
                     .font(.caption.bold())
@@ -318,9 +407,19 @@ struct AIQuotaWidgetEntryView: View {
             ForEach(entry.preferences.visibleProviders) { kind in
                 let snap = entry.dashboard.snapshot(for: kind)
                 let color = QuotaUITheme.providerColor(kind)
-                VStack(alignment: .leading, spacing: 5) {
+                let orderedPools: [QuotaPoolGroup] = {
+                    let all = snap.pools
+                    let preferredCat = entry.preferences.preferredPoolCategory(for: kind)
+                    // Si hay más de 2 pools (ej. Gemini: General, Exclusivo, Partners) y el usuario eligió Partners como principal,
+                    // aseguramos que Pool General y el Pool elegido entren en las 2 filas visibles manteniendo su orden natural.
+                    if all.count > 2, preferredCat == .partner {
+                        return all.filter { $0.category == .core || $0.category == .partner }
+                    }
+                    return Array(all.prefix(2))
+                }()
+                VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
-                        ProviderBrandLogoView(provider: kind, size: 16)
+                        ProviderBrandLogoView(provider: kind, size: 15)
                         Text(kind.displayName)
                             .font(.caption2.bold())
                         if let plan = snap.planTier {
@@ -335,8 +434,8 @@ struct AIQuotaWidgetEntryView: View {
                     }
 
                     if snap.authState == .authenticated {
-                        VStack(spacing: 4) {
-                            ForEach(snap.pools.prefix(2)) { pool in
+                        VStack(spacing: 3.5) {
+                            ForEach(orderedPools) { pool in
                                 WidgetCompactPoolRowView(
                                     pool: pool,
                                     providerColor: color,
@@ -361,7 +460,7 @@ struct AIQuotaWidgetEntryView: View {
 }
 
 /// Vista compacta de un Pool para el widget de escritorio Large:
-/// Muestra la barra de 5h (si existe) y/o la barra semanal con divisiones sutiles en 5 partes (20%, 40%, 60%, 80%).
+/// Muestra el nombre estandarizado del Pool, los modelos que contiene debajo y la barra de 5h (propia o compartida) y/o 7d.
 struct WidgetCompactPoolRowView: View {
     let pool: QuotaPoolGroup
     let providerColor: Color
@@ -373,16 +472,17 @@ struct WidgetCompactPoolRowView: View {
     }
 
     var body: some View {
-        let localizedTitle = L10n.poolTitle(for: pool.id, fallback: pool.title, language)
+        let localizedTitle = L10n.poolTitle(for: pool.id, category: pool.category, fallback: pool.title, language)
+        let localizedSubtitle = L10n.poolSubtitle(for: pool.id, fallback: pool.subtitle, language)
 
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 2.5) {
             HStack(spacing: 5) {
                 Circle()
                     .fill(poolAccent)
                     .frame(width: 5, height: 5)
 
                 Text(localizedTitle)
-                    .font(.system(size: 9.5, weight: .semibold))
+                    .font(.system(size: 9.5, weight: .bold))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
 
@@ -393,25 +493,51 @@ struct WidgetCompactPoolRowView: View {
                         Image(systemName: "bolt.fill")
                             .font(.system(size: 7))
                             .foregroundStyle(poolAccent)
-                        Text("5h:")
-                            .font(.system(size: 8, weight: .medium))
-                            .foregroundStyle(.secondary)
                         Text(displayMode.formatMenuBarPercent(remainingPercent: burst.remainingPercent))
                             .font(.system(size: 9, weight: .heavy, design: .rounded).monospacedDigit())
                             .foregroundStyle(QuotaUITheme.statusColor(remainingPercent: burst.remainingPercent))
+                        Text("5h")
+                            .font(.system(size: 8, weight: .medium))
+                            .foregroundStyle(.secondary)
                     }
+                } else if pool.sharingArchitecture == .shared5hAndScopedWeekly, let shared5h = pool.sharedBurst5hMetric {
+                    HStack(spacing: 2) {
+                        Image(systemName: "arrow.triangle.branch")
+                            .font(.system(size: 6.5))
+                            .foregroundStyle(poolAccent)
+                        Text(displayMode.formatMenuBarPercent(remainingPercent: shared5h.remainingPercent))
+                            .font(.system(size: 8.5, weight: .bold, design: .rounded).monospacedDigit())
+                            .foregroundStyle(QuotaUITheme.statusColor(remainingPercent: shared5h.remainingPercent).opacity(0.9))
+                        Text("5h")
+                            .font(.system(size: 7.5, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if (pool.burst5hMetric != nil || (pool.sharingArchitecture == .shared5hAndScopedWeekly && pool.sharedBurst5hMetric != nil)) && pool.weekly7dMetric != nil {
+                    Text("·")
+                        .font(.system(size: 8.5, weight: .bold))
+                        .foregroundStyle(.secondary)
                 }
 
                 if let weekly = pool.weekly7dMetric {
                     HStack(spacing: 2) {
-                        Text("7d:")
-                            .font(.system(size: 8, weight: .medium))
-                            .foregroundStyle(.secondary)
                         Text(displayMode.formatMenuBarPercent(remainingPercent: weekly.remainingPercent))
                             .font(.system(size: 8.5, weight: .bold, design: .rounded).monospacedDigit())
                             .foregroundStyle(QuotaUITheme.statusColor(remainingPercent: weekly.remainingPercent).opacity(0.9))
+                        Text("7d")
+                            .font(.system(size: 8, weight: .medium))
+                            .foregroundStyle(.secondary)
                     }
                 }
+            }
+
+            if let subtitle = localizedSubtitle, !subtitle.isEmpty {
+                Text(subtitle)
+                    .font(.system(size: 7.5))
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 10)
+                    .lineLimit(1)
             }
 
             if let burst = pool.burst5hMetric {
@@ -426,7 +552,7 @@ struct WidgetCompactPoolRowView: View {
                             .frame(width: max(4, geo.size.width * CGFloat(fraction)))
                     }
                 }
-                .frame(height: 5)
+                .frame(height: 4.5)
             } else if let weekly = pool.weekly7dMetric {
                 let statusColor = QuotaUITheme.statusColor(remainingPercent: weekly.remainingPercent)
                 let fraction = (displayMode == .used ? weekly.usedPercent : weekly.remainingPercent) / 100.0
@@ -440,7 +566,7 @@ struct WidgetCompactPoolRowView: View {
             }
         }
         .padding(.horizontal, 6)
-        .padding(.vertical, 4)
+        .padding(.vertical, 3.5)
         .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 6))
     }
 }

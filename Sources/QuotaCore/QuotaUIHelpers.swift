@@ -61,11 +61,12 @@ public struct QuotaPoolCardView: View {
     }
 
     public var body: some View {
-        let localizedTitle = L10n.poolTitle(for: pool.id, fallback: pool.title, language)
+        let localizedTitle = L10n.poolTitle(for: pool.id, category: pool.category, fallback: pool.title, language)
         let localizedSubtitle = L10n.poolSubtitle(for: pool.id, fallback: pool.subtitle, language)
+        let sharingNote = L10n.poolSharingNote(for: pool, language)
 
         VStack(alignment: .leading, spacing: compact ? 6 : 9) {
-            // Encabezado del Pool: Nombre completo arriba + aclaración debajo (nunca a la derecha)
+            // Encabezado del Pool: Nombre estandarizado arriba + modelos debajo + nota de arquitectura de compartición si aplica
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .center, spacing: 6) {
                     Circle()
@@ -89,10 +90,24 @@ public struct QuotaPoolCardView: View {
 
                 if let subtitle = localizedSubtitle, !subtitle.isEmpty {
                     Text(subtitle)
-                        .font(.system(size: compact ? 8.5 : 9.5))
+                        .font(.system(size: compact ? 8.5 : 9.5, weight: .medium))
                         .foregroundStyle(.secondary)
                         .padding(.leading, compact ? 12 : 13)
                         .lineLimit(2)
+                }
+
+                if let sharingNote, !sharingNote.isEmpty {
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Image(systemName: pool.sharingArchitecture == .shared5hAndScopedWeekly ? "arrow.triangle.branch" : "lock.shield")
+                            .font(.system(size: compact ? 7.5 : 8))
+                            .foregroundStyle(poolAccent)
+                        Text(sharingNote)
+                            .font(.system(size: compact ? 8 : 8.5))
+                            .foregroundStyle(.secondary.opacity(0.9))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.leading, compact ? 12 : 13)
+                    .padding(.top, 1)
                 }
             }
 
@@ -126,9 +141,13 @@ public struct QuotaPoolCardView: View {
                     language: language
                 )
             } else if let weekly = pool.weekly7dMetric {
-                // Pool exclusivamente semanal (ej. Argon 7d o Fable 7d)
+                // Pool semanal exclusivo:
+                // - En Claude Fable (.shared5hAndScopedWeekly): muestra referencia de la 5h compartida con el Pool General + sub-límite 7d
+                // - En Gemini Argon (.independentWeeklyOnly): muestra la cuota 7d independiente
                 DedicatedWeeklyPoolRulerView(
                     metric: weekly,
+                    sharedBurstMetric: pool.sharedBurst5hMetric,
+                    sharingArchitecture: pool.sharingArchitecture,
                     accentColor: poolAccent,
                     compact: compact,
                     displayMode: displayMode,
@@ -276,10 +295,12 @@ struct SecondaryWeeklyRulerView: View {
     }
 }
 
-/// Vista para Pools cuyo único límite es semanal (ej. Gemini 4 Argon 7d o Fable 7d en Claude),
-/// usando también la barra completa dividida en 5 partes (20%, 40%, 60%, 80%).
+/// Vista para Pools cuyo límite propio es semanal (ej. Gemini 4 Argon 7d independiente o Claude Fable 7d sub-límite),
+/// usando la barra completa dividida en 5 partes (20%, 40%, 60%, 80%) y mostrando la 5h compartida si aplica.
 struct DedicatedWeeklyPoolRulerView: View {
     let metric: QuotaMetric
+    let sharedBurstMetric: QuotaMetric?
+    let sharingArchitecture: PoolSharingArchitecture
     let accentColor: Color
     let compact: Bool
     let displayMode: QuotaDisplayMode
@@ -294,13 +315,58 @@ struct DedicatedWeeklyPoolRulerView: View {
             }
         }()
 
-        VStack(alignment: .leading, spacing: compact ? 2 : 4) {
+        let badgeLabel: String = {
+            switch sharingArchitecture {
+            case .shared5hAndScopedWeekly:
+                let allowance = Int(metric.weeklyAllowancePercentOfGeneral ?? 50)
+                return L10n.scopedWeeklyBadgeLabel(allowancePercent: allowance, language)
+            case .independentWeeklyOnly:
+                return L10n.independentWeeklyBadgeLabel(language)
+            case .standardDual:
+                return L10n.dedicatedWeeklyBadge(language)
+            }
+        }()
+
+        VStack(alignment: .leading, spacing: compact ? 3 : 5) {
+            // Si el pool comparte la ventana de 5h con el Pool General (caso Claude Fable), mostrar indicador explícito
+            if sharingArchitecture == .shared5hAndScopedWeekly, let shared5h = sharedBurstMetric {
+                let sharedStatusColor = QuotaUITheme.statusColor(remainingPercent: shared5h.remainingPercent)
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "bolt.horizontal.circle.fill")
+                            .font(.system(size: compact ? 8 : 8.5, weight: .bold))
+                            .foregroundStyle(accentColor)
+                        Text(L10n.shared5hBadgeLabel(language))
+                            .font(.system(size: compact ? 7.5 : 8.5, weight: .bold, design: .rounded))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if let countdown = shared5h.formattedResetCountdown() {
+                        Text("· ↻ \(countdown)")
+                            .font(.system(size: compact ? 7.5 : 8).monospacedDigit())
+                            .foregroundStyle(.tertiary)
+                    }
+
+                    Spacer(minLength: 4)
+
+                    Text(displayMode.format(metric: shared5h, compact: compact, language: language))
+                        .font(.system(size: compact ? 9.5 : 10.5, weight: .bold, design: .rounded).monospacedDigit())
+                        .foregroundStyle(sharedStatusColor.opacity(0.95))
+                }
+                .padding(.horizontal, compact ? 5 : 7)
+                .padding(.vertical, compact ? 3 : 4)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(accentColor.opacity(0.08))
+                )
+            }
+
             HStack(alignment: .firstTextBaseline, spacing: 5) {
                 HStack(spacing: 3) {
                     Image(systemName: "calendar.badge.clock")
                         .font(.system(size: compact ? 8 : 9, weight: .bold))
                         .foregroundStyle(accentColor)
-                    Text(L10n.dedicatedWeeklyBadge(language))
+                    Text(badgeLabel)
                         .font(.system(size: compact ? 8 : 9, weight: .bold, design: .rounded))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)

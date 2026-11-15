@@ -51,13 +51,34 @@ public enum QuotaWindowKind: String, Codable, Equatable, Sendable {
 }
 
 /// Categoría del Pool de modelos para diferenciar el pool base de pools dedicados/exclusivos.
-public enum QuotaPoolCategory: String, Codable, Equatable, Sendable {
+public enum QuotaPoolCategory: String, Codable, CaseIterable, Identifiable, Equatable, Sendable {
     /// Pool principal/general de la cuenta (ej. General en Claude/Codex, Gemini Hydrogen/Flash/Pro en AGY).
     case core = "core"
     /// Pool exclusivo o de modelo dedicado con presupuesto propio (ej. Argon en AGY, Fable/Opus en Claude).
     case dedicated = "dedicated"
     /// Pool de modelos de terceros incluidos en la suscripción (ej. Claude 5.5 & GPT-OSS en AGY).
     case partner = "partner"
+
+    public var id: String { rawValue }
+
+    /// Orden estricto de visualización: 1° Pool General, 2° Pool Exclusivo, 3° Pool de Partners.
+    public var sortOrder: Int {
+        switch self {
+        case .core: return 0
+        case .dedicated: return 1
+        case .partner: return 2
+        }
+    }
+}
+
+/// Modo de arquitectura de cuota de un Pool (cómo interactúan su ventana 5h y su cuota 7d con el resto de la cuenta).
+public enum PoolSharingArchitecture: String, Codable, Equatable, Sendable {
+    /// Pool estándar con su propia ventana 5h y su propio presupuesto semanal 7d.
+    case standardDual = "standardDual"
+    /// Sub-límite semanal dentro del Pool General (ej. Claude Fable: tope del 50% del semanal general y comparte la ventana de 5h del Pool General).
+    case shared5hAndScopedWeekly = "shared5hAndScopedWeekly"
+    /// Pool semanal 100% independiente sin límite de ráfaga de 5h (ej. Gemini 4 Argon en planes AI Pro).
+    case independentWeeklyOnly = "independentWeeklyOnly"
 }
 
 public struct QuotaMetric: Codable, Identifiable, Equatable, Sendable {
@@ -72,6 +93,10 @@ public struct QuotaMetric: Codable, Identifiable, Equatable, Sendable {
     public let poolSubtitle: String?
     public let poolCategory: QuotaPoolCategory
     public let windowKind: QuotaWindowKind
+    /// Si es un sub-límite semanal (ej. Claude Fable), porcentaje máximo permitido del presupuesto semanal total (ej. 50%).
+    public let weeklyAllowancePercentOfGeneral: Double?
+    /// Si es un sub-límite semanal (ej. Claude Fable), porcentaje ya consumido respecto del presupuesto semanal total (ej. 4%).
+    public let weeklyUsedPercentOfGeneral: Double?
 
     public init(
         id: String,
@@ -83,7 +108,9 @@ public struct QuotaMetric: Codable, Identifiable, Equatable, Sendable {
         poolTitle: String? = nil,
         poolSubtitle: String? = nil,
         poolCategory: QuotaPoolCategory? = nil,
-        windowKind: QuotaWindowKind? = nil
+        windowKind: QuotaWindowKind? = nil,
+        weeklyAllowancePercentOfGeneral: Double? = nil,
+        weeklyUsedPercentOfGeneral: Double? = nil
     ) {
         self.id = id
         self.label = label
@@ -99,11 +126,14 @@ public struct QuotaMetric: Codable, Identifiable, Equatable, Sendable {
         self.poolSubtitle = poolSubtitle ?? inferred.poolSubtitle
         self.poolCategory = poolCategory ?? inferred.poolCategory
         self.windowKind = windowKind ?? inferred.windowKind
+        self.weeklyAllowancePercentOfGeneral = weeklyAllowancePercentOfGeneral
+        self.weeklyUsedPercentOfGeneral = weeklyUsedPercentOfGeneral
     }
 
     enum CodingKeys: String, CodingKey {
         case id, label, usedPercent, remainingPercent, resetsAt, detail
         case poolId, poolTitle, poolSubtitle, poolCategory, windowKind
+        case weeklyAllowancePercentOfGeneral, weeklyUsedPercentOfGeneral
     }
 
     public init(from decoder: Decoder) throws {
@@ -120,6 +150,8 @@ public struct QuotaMetric: Codable, Identifiable, Equatable, Sendable {
         let poolSubtitle = try container.decodeIfPresent(String.self, forKey: .poolSubtitle) ?? inferred.poolSubtitle
         let poolCategory = try container.decodeIfPresent(QuotaPoolCategory.self, forKey: .poolCategory) ?? inferred.poolCategory
         let windowKind = try container.decodeIfPresent(QuotaWindowKind.self, forKey: .windowKind) ?? inferred.windowKind
+        let weeklyAllowancePercentOfGeneral = try container.decodeIfPresent(Double.self, forKey: .weeklyAllowancePercentOfGeneral)
+        let weeklyUsedPercentOfGeneral = try container.decodeIfPresent(Double.self, forKey: .weeklyUsedPercentOfGeneral)
 
         self.init(
             id: id,
@@ -131,7 +163,9 @@ public struct QuotaMetric: Codable, Identifiable, Equatable, Sendable {
             poolTitle: poolTitle,
             poolSubtitle: poolSubtitle,
             poolCategory: poolCategory,
-            windowKind: windowKind
+            windowKind: windowKind,
+            weeklyAllowancePercentOfGeneral: weeklyAllowancePercentOfGeneral,
+            weeklyUsedPercentOfGeneral: weeklyUsedPercentOfGeneral
         )
     }
 
@@ -155,31 +189,31 @@ public struct QuotaMetric: Codable, Identifiable, Equatable, Sendable {
         // Claude pools
         if lowerId.hasPrefix("claude-") {
             if lowerId == "claude-5h" || lowerId == "claude-7d" {
-                return ("claude-general", "Pool General", "Sonnet · Haiku · Opus base", .core, winKind)
+                return ("claude-general", "Pool General", "Claude Sonnet · Haiku · Opus base", .core, winKind)
             }
             let cleanName = label
                 .replacingOccurrences(of: " (7d)", with: "")
                 .replacingOccurrences(of: " (5h)", with: "")
-            return ("claude-\(cleanName.lowercased())", "Pool \(cleanName)", "Cuota semanal dedicada de \(cleanName)", .dedicated, winKind)
+            return ("claude-\(cleanName.lowercased())", "Pool Exclusivo", "Claude \(cleanName)", .dedicated, winKind)
         }
 
         // Codex pools
         if lowerId.hasPrefix("codex-") {
             if lowerId == "codex-review" {
-                return ("codex-review", "Pool Code Review", "Revisiones automáticas de PR", .dedicated, winKind)
+                return ("codex-review", "Pool Exclusivo", "Code Review (PRs)", .dedicated, winKind)
             }
             return ("codex-general", "Pool General", "GPT-5 · o3 · Codex CLI", .core, winKind)
         }
 
         // Gemini / Antigravity pools
         if lowerId.contains("argon") || lowerLabel.contains("argon") {
-            return ("agy-argon", "Pool Gemini 4 Argon", "Argon (Low / Med / High) · Orchestrator", .dedicated, winKind)
+            return ("agy-argon", "Pool Exclusivo", "Gemini 4 Argon (Low / Med / High) · Orchestrator", .dedicated, winKind)
         }
         if lowerId.contains("3p") || lowerLabel.contains("claude") || lowerLabel.contains("gpt-oss") {
-            return ("agy-3p", "Pool Claude 5.5 & GPT-OSS 120B", "Claude Opus 5.5 · Sonnet 5.5 · GPT-OSS 120B", .partner, winKind)
+            return ("agy-3p", "Pool de Partners", "Claude Opus 5.5 · Claude Sonnet 5.5 · GPT-OSS 120B", .partner, winKind)
         }
         if lowerId.hasPrefix("agy-") {
-            return ("agy-gemini", "Pool General", "Gemini 4 Hydrogen · 3.8 Flash · 2.5 Pro", .core, winKind)
+            return ("agy-gemini", "Pool General", "Gemini 4 Hydrogen · Gemini 3.8 Flash · Gemini 2.5 Pro", .core, winKind)
         }
 
         return ("default-\(id)", label, detail, .core, winKind)
@@ -211,6 +245,10 @@ public struct QuotaPoolGroup: Identifiable, Equatable, Sendable {
     public let burst5hMetric: QuotaMetric?
     public let weekly7dMetric: QuotaMetric?
     public let otherMetrics: [QuotaMetric]
+    /// Si este pool no tiene su propio tanque de 5h pero comparte la ventana de 5h del Pool General (ej. Claude Fable), contiene esa métrica 5h compartida.
+    public let sharedBurst5hMetric: QuotaMetric?
+    /// Arquitectura de compartición/independencia del pool.
+    public let sharingArchitecture: PoolSharingArchitecture
 
     public init(
         id: String,
@@ -219,7 +257,9 @@ public struct QuotaPoolGroup: Identifiable, Equatable, Sendable {
         category: QuotaPoolCategory,
         burst5hMetric: QuotaMetric?,
         weekly7dMetric: QuotaMetric?,
-        otherMetrics: [QuotaMetric] = []
+        otherMetrics: [QuotaMetric] = [],
+        sharedBurst5hMetric: QuotaMetric? = nil,
+        sharingArchitecture: PoolSharingArchitecture = .standardDual
     ) {
         self.id = id
         self.title = title
@@ -228,9 +268,16 @@ public struct QuotaPoolGroup: Identifiable, Equatable, Sendable {
         self.burst5hMetric = burst5hMetric
         self.weekly7dMetric = weekly7dMetric
         self.otherMetrics = otherMetrics
+        self.sharedBurst5hMetric = sharedBurst5hMetric
+        self.sharingArchitecture = sharingArchitecture
     }
 
-    /// Métrica principal del pool (prioriza 5h si existe, o 7d en pools exclusivamente semanales como Argon/Fable).
+    /// Métrica de 5h efectiva (propia o compartida con el Pool General en el caso de Fable).
+    public var effective5hMetric: QuotaMetric? {
+        burst5hMetric ?? sharedBurst5hMetric
+    }
+
+    /// Métrica principal del pool (prioriza 5h propia si existe, o 7d en pools semanales como Argon/Fable).
     public var primaryMetric: QuotaMetric? {
         burst5hMetric ?? weekly7dMetric ?? otherMetrics.first
     }
@@ -274,7 +321,8 @@ public struct ProviderQuotaSnapshot: Codable, Identifiable, Equatable, Sendable 
         self.updatedAt = updatedAt
     }
 
-    /// Agrupa las métricas del proveedor en sus respectivos Pools (preservando el orden de aparición).
+    /// Agrupa las métricas del proveedor en sus respectivos Pools, ordenados siempre como:
+    /// 1° Pool General (.core), 2° Pool Exclusivo (.dedicated), 3° Pool de Partners (.partner).
     public var pools: [QuotaPoolGroup] {
         var orderedPoolIds: [String] = []
         var grouped: [String: [QuotaMetric]] = [:]
@@ -287,12 +335,31 @@ public struct ProviderQuotaSnapshot: Codable, Identifiable, Equatable, Sendable 
             grouped[metric.poolId]?.append(metric)
         }
 
-        return orderedPoolIds.compactMap { pid in
+        // Identificar la ventana de 5h del Pool General (.core) por si un pool dedicado comparte esa ventana (ej. Claude Fable)
+        let coreBurst5h = metrics.first(where: { $0.poolCategory == .core && $0.windowKind == .burst5h })
+
+        let rawPools: [QuotaPoolGroup] = orderedPoolIds.compactMap { pid in
             guard let items = grouped[pid], let first = items.first else { return nil }
             let burst = items.first(where: { $0.windowKind == .burst5h })
             let weekly = items.first(where: { $0.windowKind == .weekly7d })
             let others = items.filter { $0.windowKind == .custom }
             let subtitle = items.compactMap(\.poolSubtitle).first ?? first.detail
+
+            let architecture: PoolSharingArchitecture
+            let shared5h: QuotaMetric?
+            if burst == nil && weekly != nil {
+                if provider == .claude && first.poolCategory == .dedicated {
+                    architecture = .shared5hAndScopedWeekly
+                    shared5h = coreBurst5h
+                } else {
+                    architecture = .independentWeeklyOnly
+                    shared5h = nil
+                }
+            } else {
+                architecture = .standardDual
+                shared5h = nil
+            }
+
             return QuotaPoolGroup(
                 id: pid,
                 title: first.poolTitle,
@@ -300,15 +367,33 @@ public struct ProviderQuotaSnapshot: Codable, Identifiable, Equatable, Sendable 
                 category: first.poolCategory,
                 burst5hMetric: burst,
                 weekly7dMetric: weekly,
-                otherMetrics: others
+                otherMetrics: others,
+                sharedBurst5hMetric: shared5h,
+                sharingArchitecture: architecture
             )
         }
+
+        return rawPools.enumerated().sorted { lhs, rhs in
+            if lhs.element.category.sortOrder != rhs.element.category.sortOrder {
+                return lhs.element.category.sortOrder < rhs.element.category.sortOrder
+            }
+            return lhs.offset < rhs.offset
+        }.map(\.element)
+    }
+
+    /// Devuelve el pool correspondiente a la categoría elegida por el usuario (o el Pool General / primero disponible como fallback).
+    public func pool(for preferredCategory: QuotaPoolCategory) -> QuotaPoolGroup? {
+        let allPools = pools
+        if let exact = allPools.first(where: { $0.category == preferredCategory }) {
+            return exact
+        }
+        return allPools.first
     }
 
     /// Primary remaining percentage across the most restrictive or primary window
     public var primaryRemainingPercent: Double? {
         guard authState == .authenticated, !metrics.isEmpty else { return nil }
-        return metrics.first?.remainingPercent
+        return pools.first?.primaryMetric?.remainingPercent ?? metrics.first?.remainingPercent
     }
 
     public var minimumRemainingPercent: Double? {

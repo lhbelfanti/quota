@@ -319,8 +319,8 @@ public struct GeminiProviderClient: Sendable {
                                 resetsAt: resetDate,
                                 detail: group.description ?? "Pool exclusivo de Gemini 4 Argon (Low/Medium/High) y Orchestrator",
                                 poolId: "agy-argon",
-                                poolTitle: "Pool Gemini 4 Argon",
-                                poolSubtitle: "Argon (Low / Med / High) · Orchestrator",
+                                poolTitle: "Pool Exclusivo",
+                                poolSubtitle: "Gemini 4 Argon (Low / Med / High) · Orchestrator",
                                 poolCategory: .dedicated,
                                 windowKind: winKind
                             )
@@ -334,7 +334,7 @@ public struct GeminiProviderClient: Sendable {
                             detail: "Gemini 4 Hydrogen, Gemini 3.8 Flash, Gemini 2.5 Pro",
                             poolId: "agy-gemini",
                             poolTitle: "Pool General",
-                            poolSubtitle: "Gemini 4 Hydrogen · 3.8 Flash · 2.5 Pro",
+                            poolSubtitle: "Gemini 4 Hydrogen · Gemini 3.8 Flash · Gemini 2.5 Pro",
                             poolCategory: .core,
                             windowKind: .burst5h
                         )
@@ -347,7 +347,7 @@ public struct GeminiProviderClient: Sendable {
                             detail: "Límite semanal compartido de Gemini Hydrogen, Flash y Pro",
                             poolId: "agy-gemini",
                             poolTitle: "Pool General",
-                            poolSubtitle: "Gemini 4 Hydrogen · 3.8 Flash · 2.5 Pro",
+                            poolSubtitle: "Gemini 4 Hydrogen · Gemini 3.8 Flash · Gemini 2.5 Pro",
                             poolCategory: .core,
                             windowKind: .weekly7d
                         )
@@ -359,8 +359,8 @@ public struct GeminiProviderClient: Sendable {
                             resetsAt: resetDate,
                             detail: "Claude Opus 5.5, Claude Sonnet 5.5, GPT-OSS 120B",
                             poolId: "agy-3p",
-                            poolTitle: "Pool Claude 5.5 & GPT-OSS 120B",
-                            poolSubtitle: "Claude Opus 5.5 · Sonnet 5.5 · GPT-OSS 120B",
+                            poolTitle: "Pool de Partners",
+                            poolSubtitle: "Claude Opus 5.5 · Claude Sonnet 5.5 · GPT-OSS 120B",
                             poolCategory: .partner,
                             windowKind: .burst5h
                         )
@@ -372,8 +372,8 @@ public struct GeminiProviderClient: Sendable {
                             resetsAt: resetDate,
                             detail: "Límite semanal compartido Claude + GPT-OSS",
                             poolId: "agy-3p",
-                            poolTitle: "Pool Claude 5.5 & GPT-OSS 120B",
-                            poolSubtitle: "Claude Opus 5.5 · Sonnet 5.5 · GPT-OSS 120B",
+                            poolTitle: "Pool de Partners",
+                            poolSubtitle: "Claude Opus 5.5 · Claude Sonnet 5.5 · GPT-OSS 120B",
                             poolCategory: .partner,
                             windowKind: .weekly7d
                         )
@@ -409,8 +409,10 @@ public struct GeminiProviderClient: Sendable {
                 )
             }
 
+            // Orden estricto: 1° Pool General (gemini5h + geminiWeekly), 2° Pool Exclusivo (argonMetrics), 3° Pool de Partners (thirdParty5h + thirdPartyWeekly)
+            metrics.append(contentsOf: [gemini5h, geminiWeekly].compactMap { $0 })
             metrics.append(contentsOf: argonMetrics)
-            metrics.append(contentsOf: [gemini5h, geminiWeekly, thirdParty5h, thirdPartyWeekly].compactMap { $0 })
+            metrics.append(contentsOf: [thirdParty5h, thirdPartyWeekly].compactMap { $0 })
             metrics.append(contentsOf: otherMetrics)
         }
 
@@ -427,26 +429,7 @@ public struct GeminiProviderClient: Sendable {
         var metrics: [QuotaMetric] = []
         var seenFractionsAndReset: Set<String> = []
 
-        // 1. Separate Gemini 4 Argon pool if present
-        if let argonEntry = models["gemini-4-argon-medium"] ?? models["gemini-4-argon-low"] ?? models["gemini-4-argon-high"] ?? models["gemini-pro-orchestrator-g1-pro"],
-           let fraction = argonEntry.quotaInfo?.remainingFraction {
-            let resetStr = argonEntry.quotaInfo?.resetTime ?? ""
-            let signature = String(format: "%.3f-%@", fraction, resetStr)
-            seenFractionsAndReset.insert(signature)
-            let remainingPct = min(max(fraction * 100.0, 0.0), 100.0)
-            let usedPct = max(0.0, 100.0 - remainingPct)
-            metrics.append(
-                QuotaMetric(
-                    id: "agy-argon-pool",
-                    label: "Gemini 4 Argon · Orchestrator (7d)",
-                    usedPercent: usedPct,
-                    resetsAt: parseISO8601(argonEntry.quotaInfo?.resetTime),
-                    detail: "Pool exclusivo de Gemini 4 Argon"
-                )
-            )
-        }
-
-        // 2. Gemini Hydrogen / 3.8 Flash / 2.5 Pro pool
+        // 1. Gemini Hydrogen / 3.8 Flash / 2.5 Pro pool (Pool General primero)
         let preferredGeminiKeys = [
             ("gemini-4-hydrogen-medium", "Gemini Hydrogen / 3.8 Flash / Pro (5h)"),
             ("gemini-3.8-flash-high", "Gemini Hydrogen / 3.8 Flash / Pro (5h)"),
@@ -454,6 +437,14 @@ public struct GeminiProviderClient: Sendable {
             ("gemini-3-flash", "Gemini 3 Flash (5h)"),
             ("gemini-3.1-flash-lite", "Gemini 3.1 Flash Lite (5h)")
         ]
+
+        // Mark Argon signature so it isn't deduplicated into general Gemini keys
+        if let argonEntry = models["gemini-4-argon-medium"] ?? models["gemini-4-argon-low"] ?? models["gemini-4-argon-high"] ?? models["gemini-pro-orchestrator-g1-pro"],
+           let fraction = argonEntry.quotaInfo?.remainingFraction {
+            let resetStr = argonEntry.quotaInfo?.resetTime ?? ""
+            let signature = String(format: "%.3f-%@", fraction, resetStr)
+            seenFractionsAndReset.insert(signature)
+        }
 
         for (key, title) in preferredGeminiKeys {
             guard let entry = models[key],
@@ -480,7 +471,7 @@ public struct GeminiProviderClient: Sendable {
         }
 
         // 2. Also check if any other Gemini model has a distinct quota bucket
-        for (key, entry) in models.sorted(by: { $0.key < $1.key }) where key.hasPrefix("gemini-") {
+        for (key, entry) in models.sorted(by: { $0.key < $1.key }) where key.hasPrefix("gemini-") && !key.contains("argon") && !key.contains("orchestrator") {
             guard let displayName = entry.displayName,
                   let fraction = entry.quotaInfo?.remainingFraction else { continue }
             let resetStr = entry.quotaInfo?.resetTime ?? ""
@@ -500,7 +491,23 @@ public struct GeminiProviderClient: Sendable {
             )
         }
 
-        // 3. Antigravity third-party model quota (Claude Opus/Sonnet 5.5 + GPT-OSS 120B)
+        // 3. Separate Gemini 4 Argon pool (Pool Exclusivo segundo)
+        if let argonEntry = models["gemini-4-argon-medium"] ?? models["gemini-4-argon-low"] ?? models["gemini-4-argon-high"] ?? models["gemini-pro-orchestrator-g1-pro"],
+           let fraction = argonEntry.quotaInfo?.remainingFraction {
+            let remainingPct = min(max(fraction * 100.0, 0.0), 100.0)
+            let usedPct = max(0.0, 100.0 - remainingPct)
+            metrics.append(
+                QuotaMetric(
+                    id: "agy-argon-pool",
+                    label: "Gemini 4 Argon · Orchestrator (7d)",
+                    usedPercent: usedPct,
+                    resetsAt: parseISO8601(argonEntry.quotaInfo?.resetTime),
+                    detail: "Pool exclusivo de Gemini 4 Argon"
+                )
+            )
+        }
+
+        // 4. Antigravity third-party model quota (Pool de Partners tercero: Claude Opus/Sonnet 5.5 + GPT-OSS 120B)
         if let agy3P = models["claude-sonnet-5-5-high"] ?? models["claude-opus-5-5-high"] ?? models["gpt-oss-120b-medium"],
            let fraction = agy3P.quotaInfo?.remainingFraction {
             let remainingPct = min(max(fraction * 100.0, 0.0), 100.0)

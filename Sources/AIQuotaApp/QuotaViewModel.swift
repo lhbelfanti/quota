@@ -84,7 +84,6 @@ final class QuotaViewModel: ObservableObject {
 
     func formattedMenuBarText(preferences: QuotaPreferencesData) -> String {
         let style = preferences.menuBarStyle
-        let mode = preferences.quotaDisplayMode
         if style == .iconOnly {
             return ""
         }
@@ -95,20 +94,25 @@ final class QuotaViewModel: ObservableObject {
         }
 
         if style == .lowestOnly {
-            let candidates: [(AIProviderKind, Double)] = enabled.compactMap { kind in
-                guard let pct = dashboard.snapshot(for: kind).primaryRemainingPercent else { return nil }
-                return (kind, pct)
+            let candidates: [(AIProviderKind, String, Double)] = enabled.compactMap { kind in
+                let snap = dashboard.snapshot(for: kind)
+                guard let summary = preferences.formatProviderSummary(snapshot: snap, compactMenuBar: true) else {
+                    return nil
+                }
+                return (kind, summary.text, summary.statusRemainingPercent)
             }
-            guard let lowest = candidates.min(by: { $0.1 < $1.1 }) else {
+            guard let lowest = candidates.min(by: { $0.2 < $1.2 }) else {
                 return "AI Quota"
             }
-            return "\(lowest.0.displayName) \(mode.formatMenuBarPercent(remainingPercent: lowest.1))"
+            return "\(lowest.0.displayName) \(lowest.1)"
         }
 
         let parts: [String] = enabled.compactMap { kind in
             let snap = dashboard.snapshot(for: kind)
-            guard let pct = snap.primaryRemainingPercent else { return nil }
-            let formattedPct = mode.formatMenuBarPercent(remainingPercent: pct)
+            guard let summary = preferences.formatProviderSummary(snapshot: snap, compactMenuBar: true) else {
+                return nil
+            }
+            let formattedPct = summary.text
             switch style {
             case .logosAndPercentages:
                 let iconGlyph: String
@@ -135,6 +139,16 @@ final class QuotaViewModel: ObservableObject {
 
         if parts.isEmpty {
             return "AI Quota"
+        }
+        if preferences.summaryWindowMode == .fiveHourAndSevenDay {
+            switch preferences.dualWindowLayoutStyle {
+            case .subscripts:
+                return parts.joined(separator: "  │  ")
+            case .capsulePills:
+                return parts.map { "[ \($0) ]" }.joined(separator: "  ")
+            default:
+                return parts.joined(separator: " · ")
+            }
         }
         return parts.joined(separator: " · ")
     }

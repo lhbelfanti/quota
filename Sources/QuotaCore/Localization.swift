@@ -213,22 +213,48 @@ public enum L10n {
         }
     }
 
-    public static func poolTitle(for poolId: String, fallback: String, _ lang: AppLanguage) -> String {
+    public static func exclusivePoolTitle(_ lang: AppLanguage) -> String {
+        switch lang {
+        case .es: return "Pool Exclusivo"
+        case .en: return "Exclusive Pool"
+        case .de: return "Exklusiver Pool"
+        case .it: return "Pool Esclusivo"
+        case .pt: return "Pool Exclusivo"
+        }
+    }
+
+    public static func partnerPoolTitle(_ lang: AppLanguage) -> String {
+        switch lang {
+        case .es: return "Pool de Partners"
+        case .en: return "Partner Pool"
+        case .de: return "Partner-Pool"
+        case .it: return "Pool Partner"
+        case .pt: return "Pool de Parceiros"
+        }
+    }
+
+    public static func poolCategoryTitle(_ category: QuotaPoolCategory, _ lang: AppLanguage) -> String {
+        switch category {
+        case .core: return generalPoolTitle(lang)
+        case .dedicated: return exclusivePoolTitle(lang)
+        case .partner: return partnerPoolTitle(lang)
+        }
+    }
+
+    public static func poolTitle(for poolId: String, category: QuotaPoolCategory? = nil, fallback: String, _ lang: AppLanguage) -> String {
+        if let category {
+            return poolCategoryTitle(category, lang)
+        }
         switch poolId {
         case "claude-general", "codex-general", "agy-gemini":
             return generalPoolTitle(lang)
-        case "agy-argon":
-            return "Pool Gemini 4 Argon"
         case "agy-3p":
-            return "Pool Claude 5.5 & GPT-OSS 120B"
-        case "codex-review":
-            return "Pool Code Review"
+            return partnerPoolTitle(lang)
+        case "agy-argon", "codex-review":
+            return exclusivePoolTitle(lang)
         default:
             if poolId.hasPrefix("claude-") {
-                let model = fallback
-                    .replacingOccurrences(of: "Pool ", with: "")
-                    .trimmingCharacters(in: .whitespaces)
-                return "Pool \(model)"
+                return exclusivePoolTitle(lang)
             }
             return fallback
         }
@@ -237,35 +263,104 @@ public enum L10n {
     public static func poolSubtitle(for poolId: String, fallback: String?, _ lang: AppLanguage) -> String? {
         switch poolId {
         case "claude-general":
-            return "Sonnet · Haiku · Opus base"
+            return "Claude Sonnet · Claude Haiku · Claude Opus (base)"
         case "codex-general":
             return "GPT-5 · o3 · Codex CLI"
         case "agy-gemini":
-            return "Gemini 4 Hydrogen · 3.8 Flash · 2.5 Pro"
+            return "Gemini 4 Hydrogen · Gemini 3.8 Flash · Gemini 2.5 Pro"
         case "agy-argon":
-            return "Argon (Low / Med / High) · Orchestrator"
+            return "Gemini 4 Argon (Low / Med / High) · Orchestrator"
         case "agy-3p":
-            return "Claude Opus 5.5 · Sonnet 5.5 · GPT-OSS 120B"
+            return "Claude Opus 5.5 · Claude Sonnet 5.5 · GPT-OSS 120B"
         case "codex-review":
-            switch lang {
-            case .es: return "Revisiones automáticas de PR"
-            case .en: return "Automated PR code reviews"
-            case .de: return "Automatische PR-Code-Reviews"
-            case .it: return "Revisioni automatiche PR"
-            case .pt: return "Revisões automáticas de PR"
-            }
+            return "Code Review (PRs)"
         default:
             if poolId.hasPrefix("claude-") {
                 let model = poolId.replacingOccurrences(of: "claude-", with: "").capitalized
-                switch lang {
-                case .es: return "Presupuesto semanal dedicado para \(model)"
-                case .en: return "Dedicated weekly budget for \(model)"
-                case .de: return "Dediziertes Wochenbudget für \(model)"
-                case .it: return "Budget settimanale dedicato per \(model)"
-                case .pt: return "Orçamento semanal dedicado para \(model)"
-                }
+                return "Claude \(model)"
             }
             return fallback
+        }
+    }
+
+    /// Nota explicativa de cómo funciona la compartición o independencia de la ventana 5h y 7d en los Pools Exclusivos (Fable vs Argon).
+    public static func poolSharingNote(for pool: QuotaPoolGroup, _ lang: AppLanguage) -> String? {
+        switch pool.sharingArchitecture {
+        case .standardDual:
+            return nil
+        case .shared5hAndScopedWeekly:
+            let allowance = Int(pool.weekly7dMetric?.weeklyAllowancePercentOfGeneral ?? 50)
+            let usedShare = pool.weekly7dMetric?.weeklyUsedPercentOfGeneral.map { "\(Int($0))%" }
+            switch lang {
+            case .es:
+                if let usedShare {
+                    return "Comparte 5h con Pool General · Sub-límite del \(allowance)% semanal (\(usedShare)/\(allowance)% usado del general)"
+                }
+                return "Comparte ventana 5h con Pool General · Sub-límite del \(allowance)% del semanal general"
+            case .en:
+                if let usedShare {
+                    return "Shares 5h with General Pool · \(allowance)% weekly sub-limit (\(usedShare)/\(allowance)% of general used)"
+                }
+                return "Shares 5h window with General Pool · \(allowance)% sub-limit of general weekly quota"
+            case .de:
+                if let usedShare {
+                    return "Teilt 5h mit Allgemeinem Pool · \(allowance)% Wochen-Sublimit (\(usedShare)/\(allowance)% verbr.)"
+                }
+                return "Teilt 5h-Fenster mit Allgemeinem Pool · \(allowance)% Sublimit des Wochenkontingents"
+            case .it:
+                if let usedShare {
+                    return "Condivide 5h con Pool Generale · Sotto-limite \(allowance)% settimanale (\(usedShare)/\(allowance)% usato)"
+                }
+                return "Condivide finestra 5h con Pool Generale · Sotto-limite del \(allowance)% settimanale generale"
+            case .pt:
+                if let usedShare {
+                    return "Compartilha 5h com Pool Geral · Sub-limite de \(allowance)% semanal (\(usedShare)/\(allowance)% usado)"
+                }
+                return "Compartilha janela 5h com Pool Geral · Sub-limite de \(allowance)% do semanal geral"
+            }
+        case .independentWeeklyOnly:
+            switch lang {
+            case .es:
+                return "Cuota 7d 100% independiente del Pool General · Sin límite de ventana 5h"
+            case .en:
+                return "100% independent 7d quota from General Pool · No 5h window limit"
+            case .de:
+                return "100% unabhängiges 7T-Kontingent · Kein 5h-Fensterlimit"
+            case .it:
+                return "Quota 7g 100% indipendente dal Pool Generale · Nessun limite 5h"
+            case .pt:
+                return "Cota 7d 100% independente do Pool Geral · Sem limite de janela 5h"
+            }
+        }
+    }
+
+    public static func shared5hBadgeLabel(_ lang: AppLanguage) -> String {
+        switch lang {
+        case .es: return "5H COMPARTIDA (POOL GENERAL)"
+        case .en: return "SHARED 5H (GENERAL POOL)"
+        case .de: return "GETEILTE 5H (ALLGEMEINER POOL)"
+        case .it: return "5H CONDIVISA (POOL GENERALE)"
+        case .pt: return "5H COMPARTILHADA (POOL GERAL)"
+        }
+    }
+
+    public static func scopedWeeklyBadgeLabel(allowancePercent: Int, _ lang: AppLanguage) -> String {
+        switch lang {
+        case .es: return "7D · SUB-LÍMITE SEMANAL (TOPE \(allowancePercent)%)"
+        case .en: return "7D · WEEKLY SUB-LIMIT (\(allowancePercent)% CAP)"
+        case .de: return "7T · WOCHEN-SUBLIMIT (\(allowancePercent)% MAX)"
+        case .it: return "7G · SOTTO-LIMITE SETTIMANALE (MAX \(allowancePercent)%)"
+        case .pt: return "7D · SUB-LIMITE SEMANAL (TETO \(allowancePercent)%)"
+        }
+    }
+
+    public static func independentWeeklyBadgeLabel(_ lang: AppLanguage) -> String {
+        switch lang {
+        case .es: return "7D · CUOTA SEMANAL INDEPENDIENTE"
+        case .en: return "7D · INDEPENDENT WEEKLY QUOTA"
+        case .de: return "7T · UNABHÄNGIGES WOCHENKONTINGENT"
+        case .it: return "7G · QUOTA SETTIMANALE INDIPENDENTE"
+        case .pt: return "7D · COTA SEMANAL INDEPENDENTE"
         }
     }
 
@@ -440,6 +535,143 @@ public enum L10n {
         case .de: return "In der Menüleiste angezeigte KIs"
         case .it: return "IA mostrate nella barra superiore"
         case .pt: return "IAs exibidas na barra superior"
+        }
+    }
+
+    public static func summaryWindowSectionTitle(_ lang: AppLanguage) -> String {
+        switch lang {
+        case .es: return "Ventana de cuota en porcentajes (5h vs 5h + 7d)"
+        case .en: return "Summary quota window (5h vs 5h + 7d)"
+        case .de: return "Kontingentfenster in der Übersicht (5h vs. 5h + 7T)"
+        case .it: return "Finestra quota nel riepilogo (5h vs 5h + 7g)"
+        case .pt: return "Janela de cota no resumo (5h vs 5h + 7d)"
+        }
+    }
+
+    public static func summaryWindowModeTitle(_ mode: SummaryWindowMode, _ lang: AppLanguage) -> String {
+        switch (mode, lang) {
+        case (.fiveHourOnly, .es): return "Solo ventana de 5 horas (5h)"
+        case (.fiveHourOnly, .en): return "5-hour window only (5h)"
+        case (.fiveHourOnly, .de): return "Nur 5-Stunden-Fenster (5h)"
+        case (.fiveHourOnly, .it): return "Solo finestra di 5 ore (5h)"
+        case (.fiveHourOnly, .pt): return "Apenas janela de 5 horas (5h)"
+
+        case (.fiveHourAndSevenDay, .es): return "Ventana de 5 horas + Cuota de 7 días (5h + 7d)"
+        case (.fiveHourAndSevenDay, .en): return "5-hour window + 7-day weekly quota (5h + 7d)"
+        case (.fiveHourAndSevenDay, .de): return "5-Stunden-Fenster + 7-Tage-Kontingent (5h + 7T)"
+        case (.fiveHourAndSevenDay, .it): return "Finestra 5 ore + Quota di 7 giorni (5h + 7g)"
+        case (.fiveHourAndSevenDay, .pt): return "Janela de 5 horas + Cota de 7 dias (5h + 7d)"
+        }
+    }
+
+    public static func dualWindowLayoutStyleLabel(_ lang: AppLanguage) -> String {
+        switch lang {
+        case .es: return "Estilo visual para 5h + 7d"
+        case .en: return "Visual style for 5h + 7d"
+        case .de: return "Darstellungsstil für 5h + 7T"
+        case .it: return "Stile visivo per 5h + 7g"
+        case .pt: return "Estilo visual para 5h + 7d"
+        }
+    }
+
+    public static func dualWindowLayoutStyleTitle(_ style: DualWindowLayoutStyle, _ lang: AppLanguage) -> String {
+        switch (style, lang) {
+        case (.stackedTwoLines, .es):
+            return "1. Dos líneas apiladas (5h arriba / 7d abajo)"
+        case (.stackedTwoLines, .en):
+            return "1. Two stacked lines (5h top / 7d bottom)"
+        case (.stackedTwoLines, .de):
+            return "1. Zwei Zeilen gestapelt (5h oben / 7T unten)"
+        case (.stackedTwoLines, .it):
+            return "1. Due righe impilate (5h sopra / 7g sotto)"
+        case (.stackedTwoLines, .pt):
+            return "1. Duas linhas empilhadas (5h cima / 7d baixo)"
+
+        case (.parentheses7d, .es):
+            return "2A. Con paréntesis: ✳︎ 79% (34% 7d)"
+        case (.parentheses7d, .en):
+            return "2A. With parentheses: ✳︎ 79% (34% 7d)"
+        case (.parentheses7d, .de):
+            return "2A. Mit Klammern: ✳︎ 79% (34% 7d)"
+        case (.parentheses7d, .it):
+            return "2A. Con parentesi: ✳︎ 79% (34% 7d)"
+        case (.parentheses7d, .pt):
+            return "2A. Com parênteses: ✳︎ 79% (34% 7d)"
+
+        case (.subscripts, .es):
+            return "2B. Subíndices con barra: ✳︎ 79%₅ₕ 34%₇𝒹 │ ⬢ …"
+        case (.subscripts, .en):
+            return "2B. Subscripts with bar: ✳︎ 79%₅ₕ 34%₇𝒹 │ ⬢ …"
+        case (.subscripts, .de):
+            return "2B. Tiefgestellt mit Trennstrich: ✳︎ 79%₅ₕ 34%₇𝒹 │ ⬢ …"
+        case (.subscripts, .it):
+            return "2B. Pedici con barra: ✳︎ 79%₅ₕ 34%₇𝒹 │ ⬢ …"
+        case (.subscripts, .pt):
+            return "2B. Subscritos com barra: ✳︎ 79%₅ₕ 34%₇𝒹 │ ⬢ …"
+
+        case (.capsulePills, .es):
+            return "3. Mini cápsulas: [ ✳︎ 79% · 34% ]"
+        case (.capsulePills, .en):
+            return "3. Mini capsules: [ ✳︎ 79% · 34% ]"
+        case (.capsulePills, .de):
+            return "3. Mini-Kapseln: [ ✳︎ 79% · 34% ]"
+        case (.capsulePills, .it):
+            return "3. Mini capsule: [ ✳︎ 79% · 34% ]"
+        case (.capsulePills, .pt):
+            return "3. Mini cápsulas: [ ✳︎ 79% · 34% ]"
+
+        case (.inlineDot, .es):
+            return "4. Clásico en línea: ✳︎ 79% 5h · 34% 7d"
+        case (.inlineDot, .en):
+            return "4. Classic inline: ✳︎ 79% 5h · 34% 7d"
+        case (.inlineDot, .de):
+            return "4. Klassisch einzeilig: ✳︎ 79% 5h · 34% 7d"
+        case (.inlineDot, .it):
+            return "4. Classico in linea: ✳︎ 79% 5h · 34% 7d"
+        case (.inlineDot, .pt):
+            return "4. Clássico em linha: ✳︎ 79% 5h · 34% 7d"
+        }
+    }
+
+    public static func preferredPoolSectionTitle(_ lang: AppLanguage) -> String {
+        switch lang {
+        case .es: return "Pool seleccionado para el porcentaje por IA"
+        case .en: return "Selected Pool for summary percentage per AI"
+        case .de: return "Ausgewählter Pool für die Prozentanzeige pro KI"
+        case .it: return "Pool selezionato per la percentuale per IA"
+        case .pt: return "Pool selecionado para a porcentagem por IA"
+        }
+    }
+
+    public static func preferredPoolSectionHint(_ lang: AppLanguage) -> String {
+        switch lang {
+        case .es: return "Elegí de cuál Pool querés ver el porcentaje en la barra superior y en los widgets compactos."
+        case .en: return "Choose which Pool drives the percentage shown in the menu bar and compact desktop widgets."
+        case .de: return "Wähle den Pool aus, dessen Prozentsatz in der Menüleiste und in kompakten Widgets angezeigt wird."
+        case .it: return "Scegli quale Pool determina la percentuale mostrata nella barra superiore e nei widget compatti."
+        case .pt: return "Escolha qual Pool define a porcentagem exibida na barra superior e nos widgets compactos."
+        }
+    }
+
+    public static func providerPoolOptionLabel(provider: AIProviderKind, category: QuotaPoolCategory, _ lang: AppLanguage) -> String {
+        let baseTitle = poolCategoryTitle(category, lang)
+        switch (provider, category) {
+        case (.claude, .core):
+            return "\(baseTitle) (Sonnet · Haiku · Opus)"
+        case (.claude, .dedicated):
+            return "\(baseTitle) (Claude Fable)"
+        case (.codex, .core):
+            return "\(baseTitle) (GPT-5 · o3 · Codex CLI)"
+        case (.codex, .dedicated):
+            return "\(baseTitle) (Code Review)"
+        case (.gemini, .core):
+            return "\(baseTitle) (Hydrogen · Flash · Pro)"
+        case (.gemini, .dedicated):
+            return "\(baseTitle) (Gemini 4 Argon · Orchestrator)"
+        case (.gemini, .partner):
+            return "\(baseTitle) (Claude 5.5 · GPT-OSS 120B)"
+        default:
+            return baseTitle
         }
     }
 

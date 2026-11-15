@@ -51,6 +51,11 @@ public struct ClaudeProviderClient: Sendable {
                 case ScopeModel = "scope"
             }
         }
+        public struct WeeklyScopedShare: Decodable, Sendable {
+            public let limit_index: Int?
+            public let used_percent_of_weekly: Double?
+            public let allowance_percent_of_weekly: Double?
+        }
         public struct ExtraUsage: Decodable, Sendable {
             public let is_enabled: Bool?
             public let monthly_limit: Double?
@@ -64,6 +69,7 @@ public struct ClaudeProviderClient: Sendable {
         public let seven_day_opus: WindowUsage?
         public let seven_day_sonnet: WindowUsage?
         public let limits: [LimitEntry]?
+        public let weekly_scoped_shares: [WeeklyScopedShare]?
         public let extra_usage: ExtraUsage?
     }
 
@@ -135,7 +141,7 @@ public struct ClaudeProviderClient: Sendable {
                     resetsAt: parseISO8601(fiveHour.resets_at),
                     poolId: "claude-general",
                     poolTitle: "Pool General",
-                    poolSubtitle: "Sonnet · Haiku · Opus base",
+                    poolSubtitle: "Claude Sonnet · Haiku · Opus base",
                     poolCategory: .core,
                     windowKind: .burst5h
                 )
@@ -151,7 +157,7 @@ public struct ClaudeProviderClient: Sendable {
                     resetsAt: parseISO8601(sevenDay.resets_at),
                     poolId: "claude-general",
                     poolTitle: "Pool General",
-                    poolSubtitle: "Sonnet · Haiku · Opus base",
+                    poolSubtitle: "Claude Sonnet · Haiku · Opus base",
                     poolCategory: .core,
                     windowKind: .weekly7d
                 )
@@ -166,8 +172,8 @@ public struct ClaudeProviderClient: Sendable {
                     usedPercent: util,
                     resetsAt: parseISO8601(opus.resets_at),
                     poolId: "claude-opus",
-                    poolTitle: "Pool Opus",
-                    poolSubtitle: "Cuota semanal dedicada de Claude Opus",
+                    poolTitle: "Pool Exclusivo",
+                    poolSubtitle: "Claude Opus",
                     poolCategory: .dedicated,
                     windowKind: .weekly7d
                 )
@@ -182,8 +188,8 @@ public struct ClaudeProviderClient: Sendable {
                     usedPercent: util,
                     resetsAt: parseISO8601(sonnet.resets_at),
                     poolId: "claude-sonnet",
-                    poolTitle: "Pool Sonnet",
-                    poolSubtitle: "Cuota semanal dedicada de Claude Sonnet",
+                    poolTitle: "Pool Exclusivo",
+                    poolSubtitle: "Claude Sonnet",
                     poolCategory: .dedicated,
                     windowKind: .weekly7d
                 )
@@ -191,11 +197,21 @@ public struct ClaudeProviderClient: Sendable {
         }
 
         if let limits = usage.limits {
-            for limit in limits where limit.kind == "weekly_scoped" {
+            let sharesByIndex: [Int: UsageResponse.WeeklyScopedShare] = Dictionary(
+                uniqueKeysWithValues: (usage.weekly_scoped_shares ?? []).compactMap { share in
+                    guard let idx = share.limit_index else { return nil }
+                    return (idx, share)
+                }
+            )
+
+            for (index, limit) in limits.enumerated() where limit.kind == "weekly_scoped" {
                 if let modelName = limit.ScopeModel?.model?.display_name,
                    let pct = limit.percent {
                     let id = "claude-scoped-\(modelName.lowercased())"
                     if !metrics.contains(where: { $0.id == id }) {
+                        let share = sharesByIndex[index]
+                        let allowancePct = share?.allowance_percent_of_weekly ?? 50.0
+                        let usedOfWeeklyPct = share?.used_percent_of_weekly
                         metrics.append(
                             QuotaMetric(
                                 id: id,
@@ -203,10 +219,12 @@ public struct ClaudeProviderClient: Sendable {
                                 usedPercent: pct,
                                 resetsAt: parseISO8601(limit.resets_at),
                                 poolId: "claude-\(modelName.lowercased())",
-                                poolTitle: "Pool \(modelName)",
-                                poolSubtitle: "Presupuesto dedicado para \(modelName)",
+                                poolTitle: "Pool Exclusivo",
+                                poolSubtitle: "Claude \(modelName)",
                                 poolCategory: .dedicated,
-                                windowKind: .weekly7d
+                                windowKind: .weekly7d,
+                                weeklyAllowancePercentOfGeneral: allowancePct,
+                                weeklyUsedPercentOfGeneral: usedOfWeeklyPct
                             )
                         )
                     }
