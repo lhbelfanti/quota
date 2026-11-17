@@ -34,7 +34,7 @@ public enum QuotaUITheme {
     }
 }
 
-/// Tarjeta visual de un Pool de Cuota que jerarquiza la ventana inmediata (5h) frente al presupuesto semanal (7d).
+/// Tarjeta visual de un Pool de Cuota: la cuota semanal (7d) es la principal y la ventana de 5h cuelga de ella como secundaria.
 public struct QuotaPoolCardView: View {
     public let pool: QuotaPoolGroup
     public let providerColor: Color
@@ -58,6 +58,17 @@ public struct QuotaPoolCardView: View {
 
     private var poolAccent: Color {
         QuotaUITheme.poolCategoryAccent(pool.category, baseColor: providerColor)
+    }
+
+    private func weeklyBadgeLabel(for weekly: QuotaMetric) -> String {
+        switch pool.sharingArchitecture {
+        case .shared5hAndScopedWeekly:
+            return L10n.scopedWeeklyBadgeLabel(allowancePercent: Int(weekly.weeklyAllowancePercentOfGeneral ?? 50), language)
+        case .independentWeeklyOnly:
+            return L10n.independentWeeklyBadgeLabel(language)
+        case .standardDual:
+            return L10n.weeklyWindowBadge(language)
+        }
     }
 
     public var body: some View {
@@ -111,43 +122,31 @@ public struct QuotaPoolCardView: View {
                 }
             }
 
-            if let burst = pool.burst5hMetric, let weekly = pool.weekly7dMetric {
-                // Caso Dual: Ventana de Ráfaga (5h) + Presupuesto Semanal (7d) con divisiones 20/40/60/80%
-                PrimaryWindowGaugeView(
-                    metric: burst,
-                    windowBadge: L10n.burstWindowBadge(language),
-                    windowIcon: "bolt.fill",
+            if let weekly = pool.weekly7dMetric {
+                PrimaryWeeklyRulerView(
+                    metric: weekly,
+                    badgeLabel: weeklyBadgeLabel(for: weekly),
                     accentColor: poolAccent,
                     compact: compact,
                     displayMode: displayMode,
                     language: language
                 )
 
-                SecondaryWeeklyRulerView(
-                    metric: weekly,
-                    accentColor: poolAccent,
-                    compact: compact,
-                    displayMode: displayMode,
-                    language: language
-                )
+                if let burst = pool.effective5hMetric {
+                    SecondaryBurstRowView(
+                        metric: burst,
+                        badgeLabel: pool.burst5hMetric == nil ? L10n.shared5hBadgeLabel(language) : L10n.burstWindowBadge(language),
+                        accentColor: poolAccent,
+                        compact: compact,
+                        displayMode: displayMode,
+                        language: language
+                    )
+                }
             } else if let burst = pool.burst5hMetric {
                 PrimaryWindowGaugeView(
                     metric: burst,
                     windowBadge: L10n.burstWindowBadge(language),
                     windowIcon: "bolt.fill",
-                    accentColor: poolAccent,
-                    compact: compact,
-                    displayMode: displayMode,
-                    language: language
-                )
-            } else if let weekly = pool.weekly7dMetric {
-                // Pool semanal exclusivo:
-                // - En Claude Fable (.shared5hAndScopedWeekly): muestra referencia de la 5h compartida con el Pool General + sub-límite 7d
-                // - En Gemini Argon (.independentWeeklyOnly): muestra la cuota 7d independiente
-                DedicatedWeeklyPoolRulerView(
-                    metric: weekly,
-                    sharedBurstMetric: pool.sharedBurst5hMetric,
-                    sharingArchitecture: pool.sharingArchitecture,
                     accentColor: poolAccent,
                     compact: compact,
                     displayMode: displayMode,
@@ -177,7 +176,7 @@ public struct QuotaPoolCardView: View {
     }
 }
 
-/// Barra protagonista de alta prioridad para la ventana inmediata de 5 horas.
+/// Barra protagonista para pools que solo tienen ventana de 5 horas.
 struct PrimaryWindowGaugeView: View {
     let metric: QuotaMetric
     let windowBadge: String
@@ -241,10 +240,10 @@ struct PrimaryWindowGaugeView: View {
     }
 }
 
-/// Barra semanal (7 días) completa con 4 líneas divisorias sutiles (cortando en 5 partes: 20%, 40%, 60%, 80%)
-/// y porcentaje actual al final de la línea.
-struct SecondaryWeeklyRulerView: View {
+/// Cuota principal del pool: barra semanal (7 días) dividida en 5 partes (20%, 40%, 60%, 80%).
+struct PrimaryWeeklyRulerView: View {
     let metric: QuotaMetric
+    let badgeLabel: String
     let accentColor: Color
     let compact: Bool
     let displayMode: QuotaDisplayMode
@@ -252,136 +251,30 @@ struct SecondaryWeeklyRulerView: View {
 
     var body: some View {
         let statusColor = QuotaUITheme.statusColor(remainingPercent: metric.remainingPercent)
-        let fraction: Double = {
-            switch displayMode {
-            case .remaining, .both: return metric.remainingPercent / 100.0
-            case .used: return metric.usedPercent / 100.0
-            }
-        }()
+        let fraction = (displayMode == .used ? metric.usedPercent : metric.remainingPercent) / 100.0
 
-        VStack(alignment: .leading, spacing: compact ? 2 : 3) {
+        VStack(alignment: .leading, spacing: compact ? 3 : 5) {
             HStack(alignment: .firstTextBaseline, spacing: 5) {
                 HStack(spacing: 3) {
                     Image(systemName: "calendar")
-                        .font(.system(size: compact ? 8 : 8.5, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                    Text(L10n.weeklyWindowBadge(language))
-                        .font(.system(size: compact ? 8 : 9, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.secondary)
-                }
-
-                if let countdown = metric.formattedResetCountdown() {
-                    Text("· ↻ \(countdown)")
-                        .font(.system(size: compact ? 7.5 : 8.5).monospacedDigit())
-                        .foregroundStyle(.tertiary)
-                }
-
-                Spacer(minLength: 4)
-
-                Text(displayMode.format(metric: metric, compact: compact, language: language))
-                    .font(.system(size: compact ? 9.5 : 10.5, weight: .bold, design: .rounded).monospacedDigit())
-                    .foregroundStyle(statusColor.opacity(0.95))
-            }
-
-            WeeklyQuintileRulerTrack(
-                fraction: fraction,
-                accentColor: accentColor,
-                statusColor: statusColor,
-                barHeight: compact ? 5 : 6.5,
-                showTickLabels: true
-            )
-        }
-        .padding(.top, 2)
-    }
-}
-
-/// Vista para Pools cuyo límite propio es semanal (ej. Gemini 4 Argon 7d independiente o Claude Fable 7d sub-límite),
-/// usando la barra completa dividida en 5 partes (20%, 40%, 60%, 80%) y mostrando la 5h compartida si aplica.
-struct DedicatedWeeklyPoolRulerView: View {
-    let metric: QuotaMetric
-    let sharedBurstMetric: QuotaMetric?
-    let sharingArchitecture: PoolSharingArchitecture
-    let accentColor: Color
-    let compact: Bool
-    let displayMode: QuotaDisplayMode
-    let language: AppLanguage
-
-    var body: some View {
-        let statusColor = QuotaUITheme.statusColor(remainingPercent: metric.remainingPercent)
-        let fraction: Double = {
-            switch displayMode {
-            case .remaining, .both: return metric.remainingPercent / 100.0
-            case .used: return metric.usedPercent / 100.0
-            }
-        }()
-
-        let badgeLabel: String = {
-            switch sharingArchitecture {
-            case .shared5hAndScopedWeekly:
-                let allowance = Int(metric.weeklyAllowancePercentOfGeneral ?? 50)
-                return L10n.scopedWeeklyBadgeLabel(allowancePercent: allowance, language)
-            case .independentWeeklyOnly:
-                return L10n.independentWeeklyBadgeLabel(language)
-            case .standardDual:
-                return L10n.dedicatedWeeklyBadge(language)
-            }
-        }()
-
-        VStack(alignment: .leading, spacing: compact ? 3 : 5) {
-            // Si el pool comparte la ventana de 5h con el Pool General (caso Claude Fable), mostrar indicador explícito
-            if sharingArchitecture == .shared5hAndScopedWeekly, let shared5h = sharedBurstMetric {
-                let sharedStatusColor = QuotaUITheme.statusColor(remainingPercent: shared5h.remainingPercent)
-                HStack(alignment: .firstTextBaseline, spacing: 5) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "bolt.horizontal.circle.fill")
-                            .font(.system(size: compact ? 8 : 8.5, weight: .bold))
-                            .foregroundStyle(accentColor)
-                        Text(L10n.shared5hBadgeLabel(language))
-                            .font(.system(size: compact ? 7.5 : 8.5, weight: .bold, design: .rounded))
-                            .foregroundStyle(.secondary)
-                    }
-
-                    if let countdown = shared5h.formattedResetCountdown() {
-                        Text("· ↻ \(countdown)")
-                            .font(.system(size: compact ? 7.5 : 8).monospacedDigit())
-                            .foregroundStyle(.tertiary)
-                    }
-
-                    Spacer(minLength: 4)
-
-                    Text(displayMode.format(metric: shared5h, compact: compact, language: language))
-                        .font(.system(size: compact ? 9.5 : 10.5, weight: .bold, design: .rounded).monospacedDigit())
-                        .foregroundStyle(sharedStatusColor.opacity(0.95))
-                }
-                .padding(.horizontal, compact ? 5 : 7)
-                .padding(.vertical, compact ? 3 : 4)
-                .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(accentColor.opacity(0.08))
-                )
-            }
-
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
-                HStack(spacing: 3) {
-                    Image(systemName: "calendar.badge.clock")
                         .font(.system(size: compact ? 8 : 9, weight: .bold))
                         .foregroundStyle(accentColor)
                     Text(badgeLabel)
-                        .font(.system(size: compact ? 8 : 9, weight: .bold, design: .rounded))
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: compact ? 8.5 : 9.5, weight: .bold, design: .rounded))
+                        .foregroundStyle(.primary)
                         .lineLimit(1)
                 }
 
                 if let countdown = metric.formattedResetCountdown() {
                     Text("· ↻ \(countdown)")
-                        .font(.system(size: compact ? 8 : 8.5, weight: .medium).monospacedDigit())
+                        .font(.system(size: compact ? 8 : 9, weight: .medium).monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
 
                 Spacer(minLength: 4)
 
                 Text(displayMode.format(metric: metric, compact: compact, language: language))
-                    .font(.system(size: compact ? 10.5 : 11.5, weight: .heavy, design: .rounded).monospacedDigit())
+                    .font(.system(size: compact ? 10.5 : 12, weight: .heavy, design: .rounded).monospacedDigit())
                     .foregroundStyle(statusColor)
             }
 
@@ -389,10 +282,69 @@ struct DedicatedWeeklyPoolRulerView: View {
                 fraction: fraction,
                 accentColor: accentColor,
                 statusColor: statusColor,
-                barHeight: compact ? 5.5 : 7.5,
+                barHeight: compact ? 6.5 : 9,
                 showTickLabels: true
             )
         }
+    }
+}
+
+/// Cuota secundaria del pool: ventana de 5 horas (propia o compartida con el Pool General), anidada bajo la semanal.
+struct SecondaryBurstRowView: View {
+    let metric: QuotaMetric
+    let badgeLabel: String
+    let accentColor: Color
+    let compact: Bool
+    let displayMode: QuotaDisplayMode
+    let language: AppLanguage
+
+    var body: some View {
+        let statusColor = QuotaUITheme.statusColor(remainingPercent: metric.remainingPercent)
+        let fraction = (displayMode == .used ? metric.usedPercent : metric.remainingPercent) / 100.0
+
+        HStack(alignment: .top, spacing: 5) {
+            Image(systemName: "arrow.turn.down.right")
+                .font(.system(size: compact ? 7.5 : 8.5, weight: .semibold))
+                .foregroundStyle(.tertiary)
+
+            VStack(alignment: .leading, spacing: compact ? 2 : 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "bolt.fill")
+                            .font(.system(size: compact ? 7 : 7.5, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Text(badgeLabel)
+                            .font(.system(size: compact ? 7.5 : 8.5, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+
+                    if let countdown = metric.formattedResetCountdown() {
+                        Text("· ↻ \(countdown)")
+                            .font(.system(size: compact ? 7.5 : 8.5).monospacedDigit())
+                            .foregroundStyle(.tertiary)
+                    }
+
+                    Spacer(minLength: 4)
+
+                    Text(displayMode.format(metric: metric, compact: compact, language: language))
+                        .font(.system(size: compact ? 9 : 10, weight: .bold, design: .rounded).monospacedDigit())
+                        .foregroundStyle(statusColor.opacity(0.95))
+                }
+
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Color.primary.opacity(0.10))
+                        Capsule()
+                            .fill(statusColor.opacity(0.85))
+                            .frame(width: max(3, geo.size.width * CGFloat(fraction)))
+                    }
+                }
+                .frame(height: compact ? 3 : 4)
+            }
+        }
+        .padding(.leading, compact ? 4 : 6)
     }
 }
 

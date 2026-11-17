@@ -75,7 +75,7 @@ struct MenuBarStatusLabel: View {
         let summary = viewModel.formattedMenuBarText(preferences: prefs)
         if summary.isEmpty {
             Image(systemName: "sparkles")
-        } else if prefs.summaryWindowMode == .fiveHourAndSevenDay,
+        } else if prefs.summaryWindowMode == .weeklyAndBurst,
                   (prefs.dualWindowLayoutStyle == .stackedTwoLines || prefs.dualWindowLayoutStyle == .capsulePills),
                   let renderedImage = renderRichMenuBarImage(prefs: prefs) {
             Image(nsImage: renderedImage)
@@ -87,24 +87,19 @@ struct MenuBarStatusLabel: View {
 
     @MainActor
     private func renderRichMenuBarImage(prefs: QuotaPreferencesData) -> NSImage? {
-        let enabled = prefs.menuBarProviders
-        let allTokens: [ProviderSummaryTokens] = enabled.compactMap { kind in
-            prefs.summaryTokens(for: viewModel.dashboard.snapshot(for: kind), compactMenuBar: true)
-        }
-        guard !allTokens.isEmpty else { return nil }
-
-        let targetTokens: [ProviderSummaryTokens]
+        var groups: [[ProviderSummaryTokens]] = prefs.menuBarProviders
+            .map { prefs.summaryTokens(for: viewModel.dashboard.snapshot(for: $0), compactMenuBar: true) }
+            .filter { !$0.isEmpty }
         if prefs.menuBarStyle == .lowestOnly {
-            guard let lowest = allTokens.min(by: { $0.statusRemainingPercent < $1.statusRemainingPercent }) else {
-                return nil
+            func lowest(_ group: [ProviderSummaryTokens]) -> Double {
+                group.map(\.statusRemainingPercent).min() ?? 100
             }
-            targetTokens = [lowest]
-        } else {
-            targetTokens = allTokens
+            groups = groups.min(by: { lowest($0) < lowest($1) }).map { [$0] } ?? []
         }
+        guard !groups.isEmpty else { return nil }
 
         let content = RichMenuBarStatusCanvas(
-            tokensList: targetTokens,
+            groups: groups,
             menuBarStyle: prefs.menuBarStyle,
             dualLayoutStyle: prefs.dualWindowLayoutStyle
         )
@@ -118,7 +113,7 @@ struct MenuBarStatusLabel: View {
 }
 
 private struct RichMenuBarStatusCanvas: View {
-    let tokensList: [ProviderSummaryTokens]
+    let groups: [[ProviderSummaryTokens]]
     let menuBarStyle: MenuBarDisplayStyle
     let dualLayoutStyle: DualWindowLayoutStyle
 
@@ -145,27 +140,34 @@ private struct RichMenuBarStatusCanvas: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: dualLayoutStyle == .capsulePills ? 5 : 8) {
-            ForEach(Array(tokensList.enumerated()), id: \.element.provider) { idx, item in
+            ForEach(Array(groups.enumerated()), id: \.offset) { idx, group in
                 if dualLayoutStyle == .stackedTwoLines {
                     HStack(alignment: .center, spacing: 3) {
-                        Text(prefixLabel(for: item.provider))
+                        Text(prefixLabel(for: group[0].provider))
                             .font(.system(size: 11, weight: .bold, design: .rounded))
 
-                        if let b = item.burst5hText, let w = item.weekly7dText {
-                            VStack(alignment: .leading, spacing: -1.5) {
-                                Text("\(b) 5h")
-                                    .font(.system(size: 8.5, weight: .bold, design: .rounded).monospacedDigit())
-                                Text("\(w) 7d")
-                                    .font(.system(size: 7.5, weight: .medium, design: .rounded).monospacedDigit())
+                        ForEach(group, id: \.poolId) { item in
+                            if let tag = item.tag {
+                                Text(tag)
+                                    .font(.system(size: 8.5, weight: .heavy, design: .rounded))
                                     .opacity(0.78)
                             }
-                        } else {
-                            Text(item.singleText)
-                                .font(.system(size: 9.5, weight: .bold, design: .rounded).monospacedDigit())
+                            if let w = item.weekly7dText, let b = item.burst5hText {
+                                VStack(alignment: .leading, spacing: -1.5) {
+                                    Text("\(w) 7d")
+                                        .font(.system(size: 8.5, weight: .bold, design: .rounded).monospacedDigit())
+                                    Text("\(b) 5h")
+                                        .font(.system(size: 7.5, weight: .medium, design: .rounded).monospacedDigit())
+                                        .opacity(0.78)
+                                }
+                            } else {
+                                Text(item.singleText)
+                                    .font(.system(size: 9.5, weight: .bold, design: .rounded).monospacedDigit())
+                            }
                         }
                     }
 
-                    if idx < tokensList.count - 1 {
+                    if idx < groups.count - 1 {
                         Rectangle()
                             .fill(Color.primary.opacity(0.32))
                             .frame(width: 1, height: 12)
@@ -173,9 +175,9 @@ private struct RichMenuBarStatusCanvas: View {
                 } else {
                     // Opción 3: Mini cápsulas (Pills) por IA
                     HStack(alignment: .center, spacing: 3.5) {
-                        Text(prefixLabel(for: item.provider))
+                        Text(prefixLabel(for: group[0].provider))
                             .font(.system(size: 10, weight: .bold, design: .rounded))
-                        Text(item.singleText)
+                        Text(group.map(\.taggedText).joined(separator: " "))
                             .font(.system(size: 10, weight: .semibold, design: .rounded).monospacedDigit())
                     }
                     .padding(.horizontal, 5.5)

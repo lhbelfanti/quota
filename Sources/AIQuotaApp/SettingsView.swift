@@ -110,7 +110,7 @@ struct SettingsPanelView: View {
                         }
                     }
 
-                    // Section 4: Selección de Ventana (5h vs 5h + 7d) y Pool por IA
+                    // Section 4: Cuotas del resumen (7d vs 7d + 5h) y Pools por IA
                     settingsCard(title: L10n.summaryWindowSectionTitle(lang), icon: "clock.badge.checkmark") {
                         VStack(alignment: .leading, spacing: 8) {
                             Picker("SummaryWindow", selection: $preferences.data.summaryWindowMode) {
@@ -121,7 +121,7 @@ struct SettingsPanelView: View {
                             .labelsHidden()
                             .controlSize(.small)
 
-                            if preferences.data.summaryWindowMode == .fiveHourAndSevenDay {
+                            if preferences.data.summaryWindowMode == .weeklyAndBurst {
                                 Text(L10n.dualWindowLayoutStyleLabel(lang))
                                     .font(.caption2.weight(.semibold))
                                     .foregroundStyle(.secondary)
@@ -147,27 +147,25 @@ struct SettingsPanelView: View {
                                 .foregroundStyle(.secondary)
 
                             ForEach(AIProviderKind.allCases) { kind in
-                                let poolOptions = QuotaPreferencesData.selectablePools(for: kind)
-                                HStack(spacing: 8) {
-                                    ProviderBrandLogoView(provider: kind, size: 16)
-                                    Text(kind.displayName)
-                                        .font(.caption.weight(.semibold))
-                                        .frame(width: 54, alignment: .leading)
-
-                                    Picker(
-                                        kind.displayName,
-                                        selection: Binding(
-                                            get: { preferences.preferredPoolCategory(for: kind) },
-                                            set: { preferences.setPreferredPoolCategory($0, for: kind) }
-                                        )
-                                    ) {
-                                        ForEach(poolOptions) { cat in
-                                            Text(L10n.providerPoolOptionLabel(provider: kind, category: cat, lang))
-                                                .tag(cat)
-                                        }
+                                VStack(alignment: .leading, spacing: 3) {
+                                    HStack(spacing: 6) {
+                                        ProviderBrandLogoView(provider: kind, size: 16)
+                                        Text(kind.displayName)
+                                            .font(.caption.weight(.semibold))
                                     }
-                                    .labelsHidden()
-                                    .controlSize(.small)
+
+                                    ForEach(ModelCatalog.pools(for: kind)) { pool in
+                                        Toggle(isOn: Binding(
+                                            get: { preferences.isMenuBarPoolSelected(pool.id, for: kind) },
+                                            set: { preferences.setMenuBarPool(pool.id, for: kind, selected: $0) }
+                                        )) {
+                                            Text(L10n.poolOptionLabel(pool, lang))
+                                                .font(.caption)
+                                        }
+                                        .toggleStyle(.checkbox)
+                                        .controlSize(.small)
+                                        .padding(.leading, 22)
+                                    }
                                 }
                             }
                         }

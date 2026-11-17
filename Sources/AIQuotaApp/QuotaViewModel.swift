@@ -140,7 +140,7 @@ final class QuotaViewModel: ObservableObject {
         if parts.isEmpty {
             return "AI Quota"
         }
-        if preferences.summaryWindowMode == .fiveHourAndSevenDay {
+        if preferences.summaryWindowMode == .weeklyAndBurst {
             switch preferences.dualWindowLayoutStyle {
             case .subscripts:
                 return parts.joined(separator: "  │  ")
