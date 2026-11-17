@@ -1,5 +1,54 @@
 import SwiftUI
 
+public struct QuotaSummaryPillSegment: View {
+    public let tokens: ProviderSummaryTokens
+    public var showPoolTag: Bool
+    public var monochrome: Bool
+    public var fontSize: CGFloat
+
+    public init(tokens: ProviderSummaryTokens, showPoolTag: Bool = false, monochrome: Bool = false, fontSize: CGFloat = 10) {
+        self.tokens = tokens
+        self.showPoolTag = showPoolTag
+        self.monochrome = monochrome
+        self.fontSize = fontSize
+    }
+
+    public var body: some View {
+        HStack(spacing: 4) {
+            if showPoolTag {
+                Text(tokens.tag ?? "G")
+                    .font(.system(size: fontSize - 1, weight: .heavy, design: .rounded))
+                    .foregroundStyle(.secondary)
+            }
+
+            if let burst = tokens.burst5hText {
+                value(burst, window: tokens.burst5hIsShared ? "5h↗" : "5h", remaining: tokens.burst5hRemaining)
+                    .help(tokens.burst5hDetail ?? "5h")
+            }
+            if tokens.isDualWindow {
+                Text("·")
+                    .foregroundStyle(.secondary)
+            }
+            if let weekly = tokens.weekly7dText {
+                value(weekly, window: "7d", remaining: tokens.weekly7dRemaining)
+            }
+        }
+        .font(.system(size: fontSize, weight: .semibold, design: .rounded).monospacedDigit())
+        .lineLimit(1)
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private func value(_ text: String, window: String, remaining: Double?) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 1) {
+            Text(text)
+                .foregroundStyle(monochrome ? Color.primary : remaining.map { QuotaUITheme.statusColor(remainingPercent: $0) } ?? Color.secondary)
+            Text(window)
+                .font(.system(size: fontSize - 3, weight: .medium))
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
 public enum QuotaUITheme {
     public static func providerColor(_ provider: AIProviderKind) -> Color {
         switch provider {
@@ -12,10 +61,10 @@ public enum QuotaUITheme {
         }
     }
 
-    public static func poolCategoryAccent(_ category: QuotaPoolCategory, baseColor: Color) -> Color {
+    public static func poolCategoryColor(_ category: QuotaPoolCategory) -> Color {
         switch category {
         case .core:
-            return baseColor
+            return Color(red: 0.06, green: 0.64, blue: 0.50)
         case .dedicated:
             return Color(red: 0.66, green: 0.44, blue: 0.96)
         case .partner:
@@ -23,14 +72,13 @@ public enum QuotaUITheme {
         }
     }
 
+    public static func poolCategoryAccent(_ category: QuotaPoolCategory, baseColor: Color) -> Color {
+        category == .core ? baseColor : poolCategoryColor(category)
+    }
+
     public static func statusColor(remainingPercent: Double) -> Color {
-        if remainingPercent <= 15 {
-            return .red
-        } else if remainingPercent <= 40 {
-            return .orange
-        } else {
-            return .green
-        }
+        let fraction = min(max(remainingPercent, 0), 100) / 100
+        return Color(hue: fraction / 3, saturation: 0.85, brightness: 0.8)
     }
 }
 
@@ -75,6 +123,7 @@ public struct QuotaPoolCardView: View {
         let localizedTitle = L10n.poolTitle(for: pool.id, category: pool.category, fallback: pool.title, language)
         let localizedSubtitle = L10n.poolSubtitle(for: pool.id, fallback: pool.subtitle, language)
         let sharingNote = L10n.poolSharingNote(for: pool, language)
+        let categoryColor = QuotaUITheme.poolCategoryColor(pool.category)
 
         VStack(alignment: .leading, spacing: compact ? 6 : 9) {
             // Encabezado del Pool: Nombre estandarizado arriba + modelos debajo + nota de arquitectura de compartición si aplica
@@ -95,8 +144,8 @@ public struct QuotaPoolCardView: View {
                         .font(.system(size: compact ? 7 : 8, weight: .heavy, design: .rounded))
                         .padding(.horizontal, compact ? 4 : 6)
                         .padding(.vertical, 2)
-                        .background(poolAccent.opacity(0.16), in: Capsule())
-                        .foregroundStyle(poolAccent)
+                        .background(categoryColor.opacity(0.16), in: Capsule())
+                        .foregroundStyle(categoryColor)
                 }
 
                 if let subtitle = localizedSubtitle, !subtitle.isEmpty {
@@ -131,8 +180,12 @@ public struct QuotaPoolCardView: View {
                     displayMode: displayMode,
                     language: language
                 )
+            } else {
+                QuotaWindowStatusRow(window: "7d", message: L10n.unavailableWindow(language), compact: compact)
+            }
 
-                if let burst = pool.effective5hMetric {
+            if let burst = pool.effective5hMetric {
+                if pool.weekly7dMetric != nil {
                     SecondaryBurstRowView(
                         metric: burst,
                         badgeLabel: pool.burst5hMetric == nil ? L10n.shared5hBadgeLabel(language) : L10n.burstWindowBadge(language),
@@ -141,16 +194,22 @@ public struct QuotaPoolCardView: View {
                         displayMode: displayMode,
                         language: language
                     )
+                } else {
+                    PrimaryWindowGaugeView(
+                        metric: burst,
+                        windowBadge: L10n.burstWindowBadge(language),
+                        windowIcon: "bolt.fill",
+                        accentColor: poolAccent,
+                        compact: compact,
+                        displayMode: displayMode,
+                        language: language
+                    )
                 }
-            } else if let burst = pool.burst5hMetric {
-                PrimaryWindowGaugeView(
-                    metric: burst,
-                    windowBadge: L10n.burstWindowBadge(language),
-                    windowIcon: "bolt.fill",
-                    accentColor: poolAccent,
-                    compact: compact,
-                    displayMode: displayMode,
-                    language: language
+            } else {
+                QuotaWindowStatusRow(
+                    window: pool.sharingArchitecture == .shared5hAndScopedWeekly ? L10n.shared5hBadgeLabel(language) : "5h",
+                    message: pool.sharingArchitecture == .independentWeeklyOnly ? L10n.unlimited5h(language) : L10n.unavailableWindow(language),
+                    compact: compact
                 )
             }
 
@@ -173,6 +232,44 @@ public struct QuotaPoolCardView: View {
             RoundedRectangle(cornerRadius: compact ? 8 : 10, style: .continuous)
                 .strokeBorder(poolAccent.opacity(0.18), lineWidth: 1)
         )
+    }
+}
+
+private struct QuotaWindowStatusRow: View {
+    let window: String
+    let message: String
+    let compact: Bool
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Text(window.uppercased())
+                .font(.system(size: compact ? 7.5 : 8.5, weight: .semibold, design: .rounded))
+            Spacer(minLength: 4)
+            Text(message)
+                .font(.system(size: compact ? 8 : 9, weight: .medium))
+        }
+        .foregroundStyle(.secondary)
+        .padding(.vertical, 2)
+    }
+}
+
+private struct QuotaResetCountdownView: View {
+    let countdown: String
+    let accentColor: Color
+    let compact: Bool
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "arrow.clockwise")
+                .foregroundStyle(accentColor)
+            Text(countdown)
+                .foregroundStyle(.primary.opacity(0.85))
+        }
+        .font(.system(size: compact ? 8.5 : 9.5, weight: .semibold).monospacedDigit())
+        .padding(.horizontal, compact ? 4 : 5)
+        .padding(.vertical, 2)
+        .background(accentColor.opacity(0.10), in: Capsule())
+        .fixedSize()
     }
 }
 
@@ -207,9 +304,7 @@ struct PrimaryWindowGaugeView: View {
                 }
 
                 if let countdown = metric.formattedResetCountdown() {
-                    Text("· ↻ \(countdown)")
-                        .font(.system(size: compact ? 8 : 9, weight: .medium).monospacedDigit())
-                        .foregroundStyle(.secondary)
+                    QuotaResetCountdownView(countdown: countdown, accentColor: accentColor, compact: compact)
                 }
 
                 Spacer(minLength: 4)
@@ -225,13 +320,7 @@ struct PrimaryWindowGaugeView: View {
                         .fill(Color.primary.opacity(0.12))
 
                     RoundedRectangle(cornerRadius: compact ? 4 : 5, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [accentColor, statusColor],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
+                        .fill(statusColor)
                         .frame(width: max(6, geo.size.width * CGFloat(fraction)))
                 }
             }
@@ -266,9 +355,7 @@ struct PrimaryWeeklyRulerView: View {
                 }
 
                 if let countdown = metric.formattedResetCountdown() {
-                    Text("· ↻ \(countdown)")
-                        .font(.system(size: compact ? 8 : 9, weight: .medium).monospacedDigit())
-                        .foregroundStyle(.secondary)
+                    QuotaResetCountdownView(countdown: countdown, accentColor: accentColor, compact: compact)
                 }
 
                 Spacer(minLength: 4)
@@ -280,7 +367,6 @@ struct PrimaryWeeklyRulerView: View {
 
             WeeklyQuintileRulerTrack(
                 fraction: fraction,
-                accentColor: accentColor,
                 statusColor: statusColor,
                 barHeight: compact ? 6.5 : 9,
                 showTickLabels: true
@@ -320,16 +406,14 @@ struct SecondaryBurstRowView: View {
                     }
 
                     if let countdown = metric.formattedResetCountdown() {
-                        Text("· ↻ \(countdown)")
-                            .font(.system(size: compact ? 7.5 : 8.5).monospacedDigit())
-                            .foregroundStyle(.tertiary)
+                        QuotaResetCountdownView(countdown: countdown, accentColor: accentColor, compact: compact)
                     }
 
                     Spacer(minLength: 4)
 
                     Text(displayMode.format(metric: metric, compact: compact, language: language))
                         .font(.system(size: compact ? 9 : 10, weight: .bold, design: .rounded).monospacedDigit())
-                        .foregroundStyle(statusColor.opacity(0.95))
+                        .foregroundStyle(statusColor)
                 }
 
                 GeometryReader { geo in
@@ -337,7 +421,7 @@ struct SecondaryBurstRowView: View {
                         Capsule()
                             .fill(Color.primary.opacity(0.10))
                         Capsule()
-                            .fill(statusColor.opacity(0.85))
+                            .fill(statusColor)
                             .frame(width: max(3, geo.size.width * CGFloat(fraction)))
                     }
                 }
@@ -351,7 +435,6 @@ struct SecondaryBurstRowView: View {
 /// Barra continua semanal cortada en 5 partes iguales por 4 líneas sutiles con sus etiquetas 20%, 40%, 60%, 80%.
 public struct WeeklyQuintileRulerTrack: View {
     public let fraction: Double
-    public let accentColor: Color
     public let statusColor: Color
     public let barHeight: CGFloat
     public let showTickLabels: Bool
@@ -360,13 +443,11 @@ public struct WeeklyQuintileRulerTrack: View {
 
     public init(
         fraction: Double,
-        accentColor: Color,
         statusColor: Color,
         barHeight: CGFloat = 6.5,
         showTickLabels: Bool = true
     ) {
         self.fraction = min(max(fraction, 0.0), 1.0)
-        self.accentColor = accentColor
         self.statusColor = statusColor
         self.barHeight = barHeight
         self.showTickLabels = showTickLabels
@@ -384,13 +465,7 @@ public struct WeeklyQuintileRulerTrack: View {
                     // Relleno continuo según el porcentaje actual
                     if fraction > 0 {
                         RoundedRectangle(cornerRadius: barHeight / 2, style: .continuous)
-                            .fill(
-                                LinearGradient(
-                                    colors: [accentColor.opacity(0.85), statusColor],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
+                            .fill(statusColor)
                             .frame(width: max(4, totalWidth * CGFloat(fraction)))
                     }
 
@@ -466,9 +541,7 @@ public struct QuotaMetricBarView: View {
 
                 HStack(spacing: 6) {
                     if let countdown = metric.formattedResetCountdown(), !compact {
-                        Text("↻ \(countdown)")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                        QuotaResetCountdownView(countdown: countdown, accentColor: accentColor, compact: compact)
                     }
 
                     Text(displayMode.format(metric: metric, compact: compact, language: language))
@@ -491,16 +564,7 @@ public struct QuotaMetricBarView: View {
                         .fill(Color.primary.opacity(0.10))
 
                     Capsule()
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    accentColor,
-                                    QuotaUITheme.statusColor(remainingPercent: metric.remainingPercent)
-                                ],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
+                        .fill(QuotaUITheme.statusColor(remainingPercent: metric.remainingPercent))
                         .frame(width: max(4, geo.size.width * CGFloat(fraction)))
                 }
             }
