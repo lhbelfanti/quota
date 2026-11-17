@@ -14,3 +14,4 @@ build/
 *.mobileprovision
 report/
 jscpd-report/
+graft/

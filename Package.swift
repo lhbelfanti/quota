@@ -14,7 +14,8 @@ let package = Package(
     targets: [
         .target(
             name: "QuotaCore",
-            path: "Sources/QuotaCore"
+            path: "Sources/QuotaCore",
+            resources: [.copy("Resources/ProviderLogos")]
         ),
         .executableTarget(
             name: "AIQuotaApp",

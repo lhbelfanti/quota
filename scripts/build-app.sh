@@ -28,14 +28,17 @@ if [ -f "$ROOT_DIR/Resources/AppIcon.png" ]; then
     cp "$ROOT_DIR/Resources/AppIcon.png" "$WIDGET_BUNDLE/Contents/Resources/AppIcon.png"
 fi
 
+cp -R "$ROOT_DIR/Sources/QuotaCore/Resources/ProviderLogos" "$APP_BUNDLE/Contents/Resources/"
+cp -R "$ROOT_DIR/Sources/QuotaCore/Resources/ProviderLogos" "$WIDGET_BUNDLE/Contents/Resources/"
+
 # 1. Compilar la aplicación principal (Menu Bar)
-swiftc -sdk "$SDK" -target "$TARGET" -O \
+swiftc -sdk "$SDK" -target "$TARGET" -O -whole-module-optimization \
   "$ROOT_DIR"/Sources/QuotaCore/*.swift \
   "$ROOT_DIR"/Sources/AIQuotaApp/*.swift \
   -o "$APP_BUNDLE/Contents/MacOS/AIQuotaApp"
 
 # 2. Compilar la extensión nativa WidgetKit (.appex)
-swiftc -sdk "$SDK" -target "$TARGET" -O \
+swiftc -sdk "$SDK" -target "$TARGET" -O -whole-module-optimization \
   -Xlinker -e -Xlinker _NSExtensionMain \
   "$ROOT_DIR"/Sources/QuotaCore/*.swift \
   "$ROOT_DIR"/Sources/AIQuotaWidget/*.swift \
