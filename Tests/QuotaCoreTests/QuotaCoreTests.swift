@@ -104,6 +104,48 @@ enum QuotaCoreTestRunner {
             precondition(metrics.count == 2, "Expected 2 Codex metrics")
             precondition(abs(metrics[0].remainingPercent - 95.0) < 0.01, "Expected 95% remaining on 5h")
             precondition(abs(metrics[1].remainingPercent - 78.0) < 0.01, "Expected 78% remaining on 7d")
+
+            let snapshot = ProviderQuotaSnapshot(provider: .codex, authState: .authenticated, metrics: metrics)
+            precondition(ModelCatalog.selectablePools(for: snapshot).map(\.id) == ["codex-general"], "Expected no review option when the API does not report a review quota")
+            precondition(ModelCatalog.pool(id: "codex-general")!.models.isEmpty, "Expected no invented model membership for the shared quota")
+            precondition(L10n.poolSubtitle(for: "codex-general", fallback: "GPT-5 · o3 · Codex CLI", .es) == "Uso compartido entre modelos de Codex", "Expected cached model names to be replaced by the quota scope")
+
+            let reviewJSON = """
+            {
+                "code_review_rate_limit": {
+                    "primary_window": {"used_percent": 35, "limit_window_seconds": 604800, "reset_at": 1795057753}
+                }
+            }
+            """.data(using: .utf8)!
+            let reviewUsage = try JSONDecoder().decode(CodexProviderClient.WhamUsageResponse.self, from: reviewJSON)
+            let reviewMetrics = CodexProviderClient.parseMetrics(from: reviewUsage)
+            precondition(reviewMetrics.count == 1 && reviewMetrics[0].windowKind == .weekly7d, "Expected the review window to use its reported weekly duration")
+            let reviewSnapshot = ProviderQuotaSnapshot(provider: .codex, authState: .authenticated, metrics: reviewMetrics)
+            precondition(ModelCatalog.selectablePools(for: reviewSnapshot).map(\.id) == ["codex-general", "codex-review"], "Expected the separate review quota to be selectable only when reported")
+            precondition(L10n.poolOptionLabel(ModelCatalog.pool(id: "codex-review")!, .es) == "Revisiones de código en GitHub", "Expected an explicit review label instead of an unnamed exclusive pool")
+            precondition(L10n.poolTitle(for: "codex-review", category: .dedicated, fallback: "Pool Exclusivo", .es) == "Revisiones de código en GitHub", "Expected the dashboard to identify the optional review quota")
+
+            let reversedJSON = """
+            {
+                "rate_limit": {
+                    "primary_window": {"used_percent": 40, "limit_window_seconds": 604800},
+                    "secondary_window": {"used_percent": 10, "limit_window_seconds": 18000}
+                },
+                "code_review_rate_limit": {
+                    "primary_window": {"used_percent": 20, "limit_window_seconds": 3600},
+                    "secondary_window": {"used_percent": 30, "limit_window_seconds": 604800}
+                }
+            }
+            """.data(using: .utf8)!
+            let reversed = try JSONDecoder().decode(CodexProviderClient.WhamUsageResponse.self, from: reversedJSON)
+            let reversedMetrics = CodexProviderClient.parseMetrics(from: reversed)
+            precondition(reversedMetrics.map(\.windowKind) == [.weekly7d, .burst5h, .custom, .weekly7d], "Expected reported durations to determine windows rather than primary or secondary position")
+            let emptyReviewJSON = """
+            {"code_review_rate_limit": {"allowed": true}}
+            """.data(using: .utf8)!
+            let emptyReview = try JSONDecoder().decode(CodexProviderClient.WhamUsageResponse.self, from: emptyReviewJSON)
+            let emptyReviewSnapshot = ProviderQuotaSnapshot(provider: .codex, authState: .authenticated, metrics: CodexProviderClient.parseMetrics(from: emptyReview))
+            precondition(ModelCatalog.selectablePools(for: emptyReviewSnapshot).map(\.id) == ["codex-general"], "Expected no phantom pool for an empty review response")
             passed += 1
         } catch {
             fatalError("Codex test failed: \(error)")
@@ -258,11 +300,12 @@ enum QuotaCoreTestRunner {
             }
             precondition(agyPools[0].primaryMetric?.windowKind == .weekly7d, "Expected 7d to be the primary metric of a dual pool")
             precondition(summary(QuotaPreferencesData(), agySnap) == "60%", "Expected the 7d quota (60%) by default")
-            precondition(summary(dual(.inlineDot), agySnap) == "60% 7d · 84% 5h", "Expected 7d first for inlineDot mode")
-            precondition(summary(dual(.parentheses5h), agySnap) == "60% (84% 5h)", "Expected 5h in parentheses")
-            precondition(summary(dual(.subscripts), agySnap) == "60%₇𝒹 84%₅ₕ", "Expected 7d first for subscripts mode")
-            precondition(summary(dual(.capsulePills), agySnap) == "60% · 84%", "Expected 7d first for capsulePills mode")
-            precondition(summary(dual(.inlineDot, pools: ["gemini": ["agy-3p"]]), agySnap) == "100% 7d · 95% 5h", "Expected Pool de Partners when selected for Gemini")
+            precondition(summary(dual(.stackedTwoLines), agySnap) == "84% 5h · 60% 7d", "Expected 5h first for stacked mode")
+            precondition(summary(dual(.inlineDot), agySnap) == "84% 5h · 60% 7d", "Expected 5h first for inlineDot mode")
+            precondition(summary(dual(.parentheses5h), agySnap) == "84% (60% 7d)", "Expected 7d in parentheses")
+            precondition(summary(dual(.subscripts), agySnap) == "84%₅ₕ 60%₇𝒹", "Expected 5h first for subscripts mode")
+            precondition(summary(dual(.capsulePills), agySnap) == "84% 5h · 60% 7d", "Expected 5h first for capsulePills mode")
+            precondition(summary(dual(.inlineDot, pools: ["gemini": ["agy-3p"]]), agySnap) == "95% 5h · 100% 7d", "Expected Pool de Partners when selected for Gemini")
 
             // Varios pools por proveedor en la barra superior
             let multiGemini = QuotaPreferencesData(menuBarPoolsByProvider: ["gemini": ["agy-argon", "agy-gemini"]])
@@ -279,8 +322,37 @@ enum QuotaCoreTestRunner {
                 ]
             )
             let claudeBoth = ["claude": ["claude-general", "claude-fable"]]
-            precondition(summary(dual(.parentheses5h, pools: claudeBoth), claudeSnap) == "70% (87% 5h) F 92% 7d", "Expected shared 5h shown once when General + Fable are selected")
-            precondition(summary(dual(.parentheses5h, pools: ["claude": ["claude-fable"]]), claudeSnap) == "92% (87% 5h)", "Expected Fable alone to show the shared 5h")
+            precondition(summary(dual(.parentheses5h, pools: claudeBoth), claudeSnap) == "87% (70% 7d) F 87%↗ (92% 7d)", "Expected shared 5h in each selected pool with a link marker")
+            precondition(summary(dual(.parentheses5h, pools: ["claude": ["claude-fable"]]), claudeSnap) == "87%↗ (92% 7d)", "Expected Fable alone to show the shared 5h")
+
+            let capsuleTokens = dual(.capsulePills, pools: claudeBoth).summaryTokens(for: claudeSnap)
+            precondition(capsuleTokens.map(\.poolId) == ["claude-general", "claude-fable"], "Expected distinct segments in catalog order")
+            precondition(capsuleTokens[0].burst5hText == "87%" && capsuleTokens[0].weekly7dText == "70%", "Expected window values to retain their identities")
+            precondition(capsuleTokens[1].burst5hText == "87%" && capsuleTokens[1].weekly7dText == "92%" && capsuleTokens[1].burst5hIsShared, "Expected both windows and a shared marker in the second segment")
+            precondition(summary(dual(.capsulePills, pools: claudeBoth), claudeSnap) == "87% 5h · 70% 7d F 87% 5h↗ · 92% 7d", "Expected labeled windows for multiple pool segments")
+            for mode in QuotaDisplayMode.allCases {
+                var prefs = dual(.inlineDot)
+                prefs.quotaDisplayMode = mode
+                let burst = mode.formatMenuBarPercent(remainingPercent: 84)
+                let weekly = mode.formatMenuBarPercent(remainingPercent: 60)
+                precondition(summary(prefs, agySnap) == "\(burst) 5h · \(weekly) 7d", "Expected 5h first for every display mode")
+            }
+
+            precondition(summary(dual(.inlineDot, pools: ["gemini": ["agy-argon"]]), agySnap) == "∞ 5h · 50% 7d", "Expected both windows with an explicit unlimited burst for Argon")
+            let missingWeekly = ProviderQuotaSnapshot(provider: .codex, authState: .authenticated, metrics: [
+                ModelCatalog.pool(id: "codex-general")!.metric(id: "only-burst", window: .burst5h, usedPercent: 20)
+            ])
+            precondition(summary(dual(.inlineDot), missingWeekly) == "80% 5h · — 7d", "Expected a missing weekly window to remain visible")
+            let missingBurst = ProviderQuotaSnapshot(provider: .codex, authState: .authenticated, metrics: [
+                ModelCatalog.pool(id: "codex-general")!.metric(id: "only-weekly", window: .weekly7d, usedPercent: 20)
+            ])
+            precondition(summary(dual(.inlineDot), missingBurst) == "— 5h · 80% 7d", "Expected a missing burst to be unavailable rather than unlimited")
+            let scopedWithoutGeneral = ProviderQuotaSnapshot(provider: .claude, authState: .authenticated, metrics: [
+                ModelCatalog.claudeScopedPool(named: "Fable").metric(id: "scoped-only", window: .weekly7d, usedPercent: 8)
+            ])
+            precondition(summary(dual(.inlineDot, pools: ["claude": ["claude-fable"]]), scopedWithoutGeneral) == "— 5h↗ · 92% 7d", "Expected a linked but unavailable burst when General is missing")
+            precondition(capsuleTokens[1].burst5hDetail == L10n.shared5hNote(.es), "Expected a readable explanation of the shared window")
+            precondition(AIProviderKind.claude.menuBarSymbol == "❋" && AIProviderKind.codex.menuBarSymbol == "⏣" && AIProviderKind.gemini.menuBarSymbol == "✦", "Expected the chosen provider symbols")
 
             // Preferencias guardadas por versiones anteriores
             let legacyJSON = """
