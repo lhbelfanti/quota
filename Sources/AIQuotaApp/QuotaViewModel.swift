@@ -115,13 +115,7 @@ final class QuotaViewModel: ObservableObject {
             let formattedPct = summary.text
             switch style {
             case .logosAndPercentages:
-                let iconGlyph: String
-                switch kind {
-                case .claude: iconGlyph = "✳︎"
-                case .codex: iconGlyph = "⬢"
-                case .gemini: iconGlyph = "✦"
-                }
-                return "\(iconGlyph) \(formattedPct)"
+                return "\(kind.menuBarSymbol) \(formattedPct)"
             case .compactInitials:
                 let prefix: String
                 switch kind {

@@ -67,18 +67,25 @@ struct AIQuotaApp: App {
 }
 
 struct MenuBarStatusLabel: View {
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var viewModel: QuotaViewModel
     @ObservedObject var preferences: PreferencesStore
 
     var body: some View {
         let prefs = preferences.data
         let summary = viewModel.formattedMenuBarText(preferences: prefs)
+        let notes = [
+            summary.contains("↗") ? "↗ " + L10n.shared5hNote(prefs.language) : nil,
+            summary.contains("∞") ? "∞ " + L10n.unlimited5h(prefs.language) : nil
+        ].compactMap { $0 }
         if summary.isEmpty {
             Image(systemName: "sparkles")
-        } else if prefs.summaryWindowMode == .weeklyAndBurst,
-                  (prefs.dualWindowLayoutStyle == .stackedTwoLines || prefs.dualWindowLayoutStyle == .capsulePills),
+        } else if (prefs.dualWindowLayoutStyle == .capsulePills ||
+                   (prefs.summaryWindowMode == .weeklyAndBurst && prefs.dualWindowLayoutStyle == .stackedTwoLines)),
                   let renderedImage = renderRichMenuBarImage(prefs: prefs) {
             Image(nsImage: renderedImage)
+                .renderingMode(.original)
+                .help(([summary] + notes).joined(separator: "\n"))
         } else {
             Text(summary)
                 .font(.system(size: 11, weight: .medium, design: .rounded).monospacedDigit())
@@ -103,11 +110,12 @@ struct MenuBarStatusLabel: View {
             menuBarStyle: prefs.menuBarStyle,
             dualLayoutStyle: prefs.dualWindowLayoutStyle
         )
+        .environment(\.colorScheme, colorScheme)
 
         let renderer = ImageRenderer(content: content)
         renderer.scale = NSScreen.main?.backingScaleFactor ?? 2.0
         guard let nsImage = renderer.nsImage else { return nil }
-        nsImage.isTemplate = true
+        nsImage.isTemplate = false
         return nsImage
     }
 }
@@ -120,11 +128,7 @@ private struct RichMenuBarStatusCanvas: View {
     private func prefixLabel(for provider: AIProviderKind) -> String {
         switch menuBarStyle {
         case .logosAndPercentages:
-            switch provider {
-            case .claude: return "✳︎"
-            case .codex: return "⬢"
-            case .gemini: return "✦"
-            }
+            return provider.menuBarSymbol
         case .compactInitials:
             switch provider {
             case .claude: return "C"
@@ -145,6 +149,7 @@ private struct RichMenuBarStatusCanvas: View {
                     HStack(alignment: .center, spacing: 3) {
                         Text(prefixLabel(for: group[0].provider))
                             .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .foregroundStyle(QuotaUITheme.providerColor(group[0].provider))
 
                         ForEach(group, id: \.poolId) { item in
                             if let tag = item.tag {
@@ -154,15 +159,17 @@ private struct RichMenuBarStatusCanvas: View {
                             }
                             if let w = item.weekly7dText, let b = item.burst5hText {
                                 VStack(alignment: .leading, spacing: -1.5) {
-                                    Text("\(w) 7d")
+                                    Text("\(b) 5h\(item.burst5hIsShared ? "↗" : "")")
                                         .font(.system(size: 8.5, weight: .bold, design: .rounded).monospacedDigit())
-                                    Text("\(b) 5h")
+                                        .foregroundStyle(item.burst5hRemaining.map { QuotaUITheme.statusColor(remainingPercent: $0) } ?? Color.secondary)
+                                    Text("\(w) 7d")
                                         .font(.system(size: 7.5, weight: .medium, design: .rounded).monospacedDigit())
-                                        .opacity(0.78)
+                                        .foregroundStyle(item.weekly7dRemaining.map { QuotaUITheme.statusColor(remainingPercent: $0) } ?? Color.secondary)
                                 }
                             } else {
                                 Text(item.singleText)
                                     .font(.system(size: 9.5, weight: .bold, design: .rounded).monospacedDigit())
+                                    .foregroundStyle(QuotaUITheme.statusColor(remainingPercent: item.statusRemainingPercent))
                             }
                         }
                     }
@@ -173,18 +180,35 @@ private struct RichMenuBarStatusCanvas: View {
                             .frame(width: 1, height: 12)
                     }
                 } else {
-                    // Opción 3: Mini cápsulas (Pills) por IA
-                    HStack(alignment: .center, spacing: 3.5) {
+                    HStack(alignment: .center, spacing: 5) {
                         Text(prefixLabel(for: group[0].provider))
                             .font(.system(size: 10, weight: .bold, design: .rounded))
-                        Text(group.map(\.taggedText).joined(separator: " "))
-                            .font(.system(size: 10, weight: .semibold, design: .rounded).monospacedDigit())
+                            .foregroundStyle(QuotaUITheme.providerColor(group[0].provider))
+                        ForEach(Array(group.enumerated()), id: \.element.poolId) { index, item in
+                            if index > 0 {
+                                Rectangle()
+                                    .fill(Color.primary.opacity(0.25))
+                                    .frame(width: 1, height: 11)
+                            }
+                            QuotaSummaryPillSegment(
+                                tokens: item,
+                                showPoolTag: group.count > 1
+                            )
+                        }
                     }
                     .padding(.horizontal, 5.5)
                     .padding(.vertical, 2)
                     .background(
                         Capsule(style: .continuous)
-                            .strokeBorder(Color.primary.opacity(0.45), lineWidth: 1)
+                            .fill(Color(nsColor: .windowBackgroundColor))
+                            .overlay(
+                                Capsule(style: .continuous)
+                                    .fill(QuotaUITheme.providerColor(group[0].provider).opacity(0.08))
+                            )
+                    )
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .strokeBorder(QuotaUITheme.providerColor(group[0].provider).opacity(0.55), lineWidth: 1)
                     )
                 }
             }

@@ -145,6 +145,7 @@ struct AIQuotaWidgetEntryView: View {
             Text(entry.date, style: .time)
                 .font(.system(size: 9.5, weight: .medium))
                 .foregroundStyle(.secondary)
+                .fixedSize()
 
             Button(intent: RefreshAIQuotaIntent()) {
                 Image(systemName: "arrow.clockwise")
@@ -170,9 +171,11 @@ struct AIQuotaWidgetEntryView: View {
                 let snap = entry.dashboard.snapshot(for: kind)
                 HStack(spacing: 6) {
                     ProviderBrandLogoView(provider: kind, size: 15)
-                    Text(kind.displayName)
-                        .font(.caption2.weight(.semibold))
-                        .lineLimit(1)
+                    if entry.preferences.dualWindowLayoutStyle != .capsulePills || entry.preferences.summaryWindowMode != .weeklyAndBurst {
+                        Text(kind.displayName)
+                            .font(.caption2.weight(.semibold))
+                            .lineLimit(1)
+                    }
                     Spacer(minLength: 2)
                     if let tokens = entry.preferences.summaryTokens(for: snap, compactMenuBar: true).first {
                         widgetCompactSummaryBadge(tokens: tokens, isSmallWidget: true)
@@ -200,6 +203,8 @@ struct AIQuotaWidgetEntryView: View {
                 ForEach(entry.preferences.visibleProviders) { kind in
                     let snap = entry.dashboard.snapshot(for: kind)
                     let color = QuotaUITheme.providerColor(kind)
+                    let allTokens = entry.preferences.summaryTokens(for: snap, compactMenuBar: true)
+                    let tokens = entry.preferences.dualWindowLayoutStyle == .capsulePills ? allTokens : Array(allTokens.prefix(1))
                     let selectedPool = entry.preferences.menuBarPools(for: snap).first
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 5) {
@@ -210,11 +215,25 @@ struct AIQuotaWidgetEntryView: View {
                             Spacer(minLength: 0)
                         }
 
-                        if snap.authState == .authenticated,
-                           let tokens = entry.preferences.summaryTokens(for: snap, compactMenuBar: false).first {
-                            widgetCompactSummaryBadge(tokens: tokens, isSmallWidget: false)
+                        if snap.authState == .authenticated, !tokens.isEmpty {
+                            ForEach(tokens, id: \.poolId) { item in
+                                HStack(spacing: 3) {
+                                    if tokens.count > 1 {
+                                        Text(item.tag ?? "G")
+                                            .font(.system(size: 7, weight: .heavy, design: .rounded))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    widgetCompactSummaryBadge(tokens: item, isSmallWidget: false)
+                                }
+                                if item.burst5hIsShared, let detail = item.burst5hDetail {
+                                    Text(detail)
+                                        .font(.system(size: 7, weight: .medium))
+                                        .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
 
-                            if let selectedPool {
+                            if tokens.count == 1, let selectedPool {
                                 Text(L10n.poolTitle(for: selectedPool.id, category: selectedPool.category, fallback: selectedPool.title, lang))
                                     .font(.system(size: 8.5, weight: .semibold))
                                     .foregroundStyle(.secondary)
@@ -249,55 +268,57 @@ struct AIQuotaWidgetEntryView: View {
         if entry.preferences.summaryWindowMode == .weeklyAndBurst,
            let wText = tokens.weekly7dText,
            let bText = tokens.burst5hText {
-            let wColor = QuotaUITheme.statusColor(remainingPercent: tokens.weekly7dRemaining ?? tokens.statusRemainingPercent)
-            let bColor = QuotaUITheme.statusColor(remainingPercent: tokens.burst5hRemaining ?? tokens.statusRemainingPercent)
+            let wColor = tokens.weekly7dRemaining.map { QuotaUITheme.statusColor(remainingPercent: $0) } ?? Color.secondary
+            let bColor = tokens.burst5hRemaining.map { QuotaUITheme.statusColor(remainingPercent: $0) } ?? Color.secondary
+            let burstLabel = tokens.burst5hIsShared ? "5h↗" : "5h"
 
             switch style {
             case .stackedTwoLines:
                 if isSmallWidget {
                     VStack(alignment: .trailing, spacing: -1) {
-                        Text("\(wText) 7d")
+                        Text("\(bText) \(burstLabel)")
                             .font(.system(size: 9.5, weight: .bold, design: .rounded).monospacedDigit())
-                            .foregroundStyle(wColor)
-                        Text("\(bText) 5h")
+                            .foregroundStyle(bColor)
+                        Text("\(wText) 7d")
                             .font(.system(size: 8, weight: .medium, design: .rounded).monospacedDigit())
-                            .foregroundStyle(bColor.opacity(0.85))
+                            .foregroundStyle(wColor.opacity(0.85))
                     }
                 } else {
                     VStack(alignment: .leading, spacing: 1) {
                         HStack(alignment: .firstTextBaseline, spacing: 3) {
-                            Text(wText)
+                            Text(bText)
                                 .font(.system(size: 12.5, weight: .heavy, design: .rounded).monospacedDigit())
-                                .foregroundStyle(wColor)
-                            Text("7d")
+                                .foregroundStyle(bColor)
+                            Text(burstLabel)
                                 .font(.system(size: 8.5, weight: .semibold, design: .rounded))
                                 .foregroundStyle(.secondary)
                         }
                         HStack(alignment: .firstTextBaseline, spacing: 3) {
-                            Text(bText)
+                            Text(wText)
                                 .font(.system(size: 10, weight: .bold, design: .rounded).monospacedDigit())
-                                .foregroundStyle(bColor.opacity(0.9))
-                            Text("5h")
+                                .foregroundStyle(wColor.opacity(0.9))
+                            Text("7d")
                                 .font(.system(size: 8, weight: .medium, design: .rounded))
                                 .foregroundStyle(.secondary)
                         }
                     }
                 }
             case .capsulePills:
-                HStack(spacing: 3) {
-                    Text(wText)
-                        .font(.system(size: isSmallWidget ? 9.5 : 10.5, weight: .bold, design: .rounded).monospacedDigit())
-                        .foregroundStyle(wColor)
-                    Text("·")
-                        .font(.system(size: 8.5, weight: .bold))
-                        .foregroundStyle(.secondary)
-                    Text(bText)
-                        .font(.system(size: isSmallWidget ? 9 : 10, weight: .semibold, design: .rounded).monospacedDigit())
-                        .foregroundStyle(bColor.opacity(0.9))
+                ViewThatFits(in: .horizontal) {
+                    QuotaSummaryPillSegment(tokens: tokens, fontSize: isSmallWidget ? 9 : 8)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("\(bText) \(burstLabel)")
+                            .foregroundStyle(bColor)
+                        Text("\(wText) 7d")
+                            .foregroundStyle(wColor)
+                    }
+                    .font(.system(size: 8, weight: .semibold, design: .rounded).monospacedDigit())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                 }
                 .padding(.horizontal, 5)
                 .padding(.vertical, 1.5)
-                .background(Color.primary.opacity(0.08), in: Capsule())
+                .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
             default:
                 Text(tokens.singleText)
                     .font(.system(size: isSmallWidget ? 9.5 : 10.5, weight: .bold, design: .rounded).monospacedDigit())
@@ -404,6 +425,32 @@ struct WidgetCompactPoolRowView: View {
 
                 Spacer(minLength: 4)
 
+                if let burst = pool.effective5hMetric {
+                    HStack(spacing: 2) {
+                        if pool.burst5hMetric == nil {
+                            Image(systemName: "arrow.triangle.branch")
+                                .font(.system(size: 6.5))
+                                .foregroundStyle(poolAccent)
+                        }
+                        Text(displayMode.formatMenuBarPercent(remainingPercent: burst.remainingPercent))
+                            .font(.system(size: 8.5, weight: .bold, design: .rounded).monospacedDigit())
+                            .foregroundStyle(QuotaUITheme.statusColor(remainingPercent: burst.remainingPercent).opacity(0.9))
+                        Text(pool.burst5hMetric == nil ? "5h↗" : "5h")
+                            .font(.system(size: 7.5, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text(pool.sharingArchitecture == .independentWeeklyOnly ? "∞ 5h" : "— 5h")
+                        .font(.system(size: 8, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .help(pool.sharingArchitecture == .independentWeeklyOnly ? L10n.unlimited5h(language) : L10n.unavailableWindow(language))
+                }
+                if pool.weekly7dMetric != nil {
+                    Text("·")
+                        .font(.system(size: 8.5, weight: .bold))
+                        .foregroundStyle(.secondary)
+                }
+
                 if let weekly = pool.weekly7dMetric {
                     HStack(spacing: 2) {
                         Image(systemName: "calendar")
@@ -416,28 +463,10 @@ struct WidgetCompactPoolRowView: View {
                             .font(.system(size: 8, weight: .medium))
                             .foregroundStyle(.secondary)
                     }
-                }
-
-                if pool.weekly7dMetric != nil && pool.effective5hMetric != nil {
-                    Text("·")
-                        .font(.system(size: 8.5, weight: .bold))
+                } else {
+                    Text("— 7d")
+                        .font(.system(size: 8, weight: .semibold, design: .rounded))
                         .foregroundStyle(.secondary)
-                }
-
-                if let burst = pool.effective5hMetric {
-                    HStack(spacing: 2) {
-                        if pool.burst5hMetric == nil {
-                            Image(systemName: "arrow.triangle.branch")
-                                .font(.system(size: 6.5))
-                                .foregroundStyle(poolAccent)
-                        }
-                        Text(displayMode.formatMenuBarPercent(remainingPercent: burst.remainingPercent))
-                            .font(.system(size: 8.5, weight: .bold, design: .rounded).monospacedDigit())
-                            .foregroundStyle(QuotaUITheme.statusColor(remainingPercent: burst.remainingPercent).opacity(0.9))
-                        Text("5h")
-                            .font(.system(size: 7.5, weight: .medium))
-                            .foregroundStyle(.secondary)
-                    }
                 }
             }
 
@@ -449,12 +478,18 @@ struct WidgetCompactPoolRowView: View {
                     .lineLimit(1)
             }
 
+            if pool.sharingArchitecture == .shared5hAndScopedWeekly {
+                Text(L10n.shared5hNote(language))
+                    .font(.system(size: 7, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
             if let weekly = pool.weekly7dMetric {
                 let statusColor = QuotaUITheme.statusColor(remainingPercent: weekly.remainingPercent)
                 let fraction = (displayMode == .used ? weekly.usedPercent : weekly.remainingPercent) / 100.0
                 WeeklyQuintileRulerTrack(
                     fraction: fraction,
-                    accentColor: poolAccent,
                     statusColor: statusColor,
                     barHeight: 4.5,
                     showTickLabels: false
@@ -467,7 +502,7 @@ struct WidgetCompactPoolRowView: View {
                         RoundedRectangle(cornerRadius: 2.5)
                             .fill(Color.primary.opacity(0.12))
                         RoundedRectangle(cornerRadius: 2.5)
-                            .fill(LinearGradient(colors: [poolAccent, statusColor], startPoint: .leading, endPoint: .trailing))
+                            .fill(statusColor)
                             .frame(width: max(4, geo.size.width * CGFloat(fraction)))
                     }
                 }

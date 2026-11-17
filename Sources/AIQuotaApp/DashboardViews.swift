@@ -21,7 +21,8 @@ struct ProviderCardView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
                         Text(snapshot.provider.displayName)
-                            .font(.subheadline.weight(.semibold))
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(brandColor)
 
                         if let plan = snapshot.planTier, !plan.isEmpty {
                             Text(plan)
@@ -105,12 +106,23 @@ struct ProviderCardView: View {
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.75))
+                .fill(Color(nsColor: .controlBackgroundColor))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(brandColor.opacity(0.06))
+                )
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+                .strokeBorder(brandColor.opacity(0.40), lineWidth: 1)
         )
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(brandColor, lineWidth: 3)
+                .mask(alignment: .leading) {
+                    Rectangle().frame(width: 12)
+                }
+        }
     }
 
     @ViewBuilder
@@ -162,6 +174,7 @@ struct DashboardWindowView: View {
             if showingSettings {
                 SettingsPanelView(
                     preferences: preferences,
+                    dashboard: viewModel.dashboard,
                     onBack: {
                         withAnimation(.easeInOut(duration: 0.18)) {
                             showingSettings = false

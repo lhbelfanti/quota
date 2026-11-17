@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsPanelView: View {
     @ObservedObject var preferences: PreferencesStore
+    let dashboard: QuotaDashboardState
     var onBack: () -> Void
 
     private var lang: AppLanguage {
@@ -147,6 +148,9 @@ struct SettingsPanelView: View {
                                 .foregroundStyle(.secondary)
 
                             ForEach(AIProviderKind.allCases) { kind in
+                                let pools = ModelCatalog.selectablePools(for: dashboard.snapshot(for: kind))
+                                let selected = preferences.data.menuBarPoolIds(for: kind).filter { id in pools.contains { $0.id == id } }
+                                let selectedIds = selected.isEmpty ? pools.prefix(1).map(\.id) : selected
                                 VStack(alignment: .leading, spacing: 3) {
                                     HStack(spacing: 6) {
                                         ProviderBrandLogoView(provider: kind, size: 16)
@@ -154,14 +158,15 @@ struct SettingsPanelView: View {
                                             .font(.caption.weight(.semibold))
                                     }
 
-                                    ForEach(ModelCatalog.pools(for: kind)) { pool in
+                                    ForEach(pools) { pool in
                                         Toggle(isOn: Binding(
-                                            get: { preferences.isMenuBarPoolSelected(pool.id, for: kind) },
+                                            get: { selectedIds.contains(pool.id) },
                                             set: { preferences.setMenuBarPool(pool.id, for: kind, selected: $0) }
                                         )) {
                                             Text(L10n.poolOptionLabel(pool, lang))
                                                 .font(.caption)
                                         }
+                                        .disabled(selectedIds.count == 1 && selectedIds.contains(pool.id))
                                         .toggleStyle(.checkbox)
                                         .controlSize(.small)
                                         .padding(.leading, 22)
