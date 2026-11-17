@@ -242,6 +242,9 @@ public enum L10n {
     }
 
     public static func poolTitle(for poolId: String, category: QuotaPoolCategory? = nil, fallback: String, _ lang: AppLanguage) -> String {
+        if poolId == "codex-review" {
+            return codexReviewTitle(lang)
+        }
         if let category {
             return poolCategoryTitle(category, lang)
         }
@@ -250,7 +253,7 @@ public enum L10n {
             return generalPoolTitle(lang)
         case "agy-3p":
             return partnerPoolTitle(lang)
-        case "agy-argon", "codex-review":
+        case "agy-argon":
             return exclusivePoolTitle(lang)
         default:
             if poolId.hasPrefix("claude-") {
@@ -261,7 +264,29 @@ public enum L10n {
     }
 
     public static func poolSubtitle(for poolId: String, fallback: String?, _ lang: AppLanguage) -> String? {
-        ModelCatalog.pool(id: poolId)?.subtitle ?? fallback
+        if poolId == "codex-general" {
+            switch lang {
+            case .es: return "Uso compartido entre modelos de Codex"
+            case .en: return "Shared usage across Codex models"
+            case .de: return "Gemeinsames Kontingent für Codex-Modelle"
+            case .it: return "Utilizzo condiviso tra i modelli Codex"
+            case .pt: return "Uso compartilhado entre modelos do Codex"
+            }
+        }
+        if poolId == "codex-review" {
+            return codexReviewTitle(lang)
+        }
+        return ModelCatalog.pool(id: poolId)?.subtitle ?? fallback
+    }
+
+    public static func codexReviewTitle(_ lang: AppLanguage) -> String {
+        switch lang {
+        case .es: return "Revisiones de código en GitHub"
+        case .en: return "GitHub code reviews"
+        case .de: return "Code-Reviews auf GitHub"
+        case .it: return "Revisioni del codice su GitHub"
+        case .pt: return "Revisões de código no GitHub"
+        }
     }
 
     /// Nota explicativa de cómo funciona la compartición o independencia de la ventana 5h y 7d en los Pools Exclusivos (Fable vs Argon).
@@ -312,6 +337,36 @@ public enum L10n {
             case .pt:
                 return "Cota 7d 100% independente do Pool Geral · Sem limite de janela 5h"
             }
+        }
+    }
+
+    public static func shared5hNote(_ lang: AppLanguage) -> String {
+        switch lang {
+        case .es: return "5h compartidas con el Pool General"
+        case .en: return "5h shared with General Pool"
+        case .de: return "5h mit allgemeinem Pool geteilt"
+        case .it: return "5h condivise con il Pool Generale"
+        case .pt: return "5h compartilhadas com o Pool Geral"
+        }
+    }
+
+    public static func unlimited5h(_ lang: AppLanguage) -> String {
+        switch lang {
+        case .es: return "Sin límite de 5h"
+        case .en: return "No 5h limit"
+        case .de: return "Kein 5h-Limit"
+        case .it: return "Nessun limite di 5h"
+        case .pt: return "Sem limite de 5h"
+        }
+    }
+
+    public static func unavailableWindow(_ lang: AppLanguage) -> String {
+        switch lang {
+        case .es: return "No disponible"
+        case .en: return "Unavailable"
+        case .de: return "Nicht verfügbar"
+        case .it: return "Non disponibile"
+        case .pt: return "Indisponível"
         }
     }
 
@@ -511,11 +566,11 @@ public enum L10n {
 
     public static func summaryWindowSectionTitle(_ lang: AppLanguage) -> String {
         switch lang {
-        case .es: return "Cuotas en porcentajes (7d vs 7d + 5h)"
-        case .en: return "Summary quotas (7d vs 7d + 5h)"
-        case .de: return "Kontingente in der Übersicht (7T vs. 7T + 5h)"
-        case .it: return "Quote nel riepilogo (7g vs 7g + 5h)"
-        case .pt: return "Cotas no resumo (7d vs 7d + 5h)"
+        case .es: return "Cuotas en porcentajes (7d vs 5h + 7d)"
+        case .en: return "Summary quotas (7d vs 5h + 7d)"
+        case .de: return "Kontingente in der Übersicht (7T vs. 5h + 7T)"
+        case .it: return "Quote nel riepilogo (7g vs 5h + 7g)"
+        case .pt: return "Cotas no resumo (7d vs 5h + 7d)"
         }
     }
 
@@ -527,80 +582,80 @@ public enum L10n {
         case (.weeklyOnly, .it): return "Solo quota di 7 giorni (7g)"
         case (.weeklyOnly, .pt): return "Apenas cota de 7 dias (7d)"
 
-        case (.weeklyAndBurst, .es): return "Cuota de 7 días + Ventana de 5 horas (7d + 5h)"
-        case (.weeklyAndBurst, .en): return "7-day weekly quota + 5-hour window (7d + 5h)"
-        case (.weeklyAndBurst, .de): return "7-Tage-Kontingent + 5-Stunden-Fenster (7T + 5h)"
-        case (.weeklyAndBurst, .it): return "Quota di 7 giorni + Finestra 5 ore (7g + 5h)"
-        case (.weeklyAndBurst, .pt): return "Cota de 7 dias + Janela de 5 horas (7d + 5h)"
+        case (.weeklyAndBurst, .es): return "Ventana de 5 horas + Cuota de 7 días (5h + 7d)"
+        case (.weeklyAndBurst, .en): return "5-hour window + 7-day weekly quota (5h + 7d)"
+        case (.weeklyAndBurst, .de): return "5-Stunden-Fenster + 7-Tage-Kontingent (5h + 7T)"
+        case (.weeklyAndBurst, .it): return "Finestra 5 ore + Quota di 7 giorni (5h + 7g)"
+        case (.weeklyAndBurst, .pt): return "Janela de 5 horas + Cota de 7 dias (5h + 7d)"
         }
     }
 
     public static func dualWindowLayoutStyleLabel(_ lang: AppLanguage) -> String {
         switch lang {
-        case .es: return "Estilo visual para 7d + 5h"
-        case .en: return "Visual style for 7d + 5h"
-        case .de: return "Darstellungsstil für 7T + 5h"
-        case .it: return "Stile visivo per 7g + 5h"
-        case .pt: return "Estilo visual para 7d + 5h"
+        case .es: return "Estilo visual para 5h + 7d"
+        case .en: return "Visual style for 5h + 7d"
+        case .de: return "Darstellungsstil für 5h + 7T"
+        case .it: return "Stile visivo per 5h + 7g"
+        case .pt: return "Estilo visual para 5h + 7d"
         }
     }
 
     public static func dualWindowLayoutStyleTitle(_ style: DualWindowLayoutStyle, _ lang: AppLanguage) -> String {
         switch (style, lang) {
         case (.stackedTwoLines, .es):
-            return "1. Dos líneas apiladas (7d arriba / 5h abajo)"
+            return "1. Dos líneas apiladas (5h arriba / 7d abajo)"
         case (.stackedTwoLines, .en):
-            return "1. Two stacked lines (7d top / 5h bottom)"
+            return "1. Two stacked lines (5h top / 7d bottom)"
         case (.stackedTwoLines, .de):
-            return "1. Zwei Zeilen gestapelt (7T oben / 5h unten)"
+            return "1. Zwei Zeilen gestapelt (5h oben / 7T unten)"
         case (.stackedTwoLines, .it):
-            return "1. Due righe impilate (7g sopra / 5h sotto)"
+            return "1. Due righe impilate (5h sopra / 7g sotto)"
         case (.stackedTwoLines, .pt):
-            return "1. Duas linhas empilhadas (7d cima / 5h baixo)"
+            return "1. Duas linhas empilhadas (5h cima / 7d baixo)"
 
         case (.parentheses5h, .es):
-            return "2A. Con paréntesis: ✳︎ 34% (79% 5h)"
+            return "2A. Con paréntesis: ❋ 79% (34% 7d)"
         case (.parentheses5h, .en):
-            return "2A. With parentheses: ✳︎ 34% (79% 5h)"
+            return "2A. With parentheses: ❋ 79% (34% 7d)"
         case (.parentheses5h, .de):
-            return "2A. Mit Klammern: ✳︎ 34% (79% 5h)"
+            return "2A. Mit Klammern: ❋ 79% (34% 7d)"
         case (.parentheses5h, .it):
-            return "2A. Con parentesi: ✳︎ 34% (79% 5h)"
+            return "2A. Con parentesi: ❋ 79% (34% 7d)"
         case (.parentheses5h, .pt):
-            return "2A. Com parênteses: ✳︎ 34% (79% 5h)"
+            return "2A. Com parênteses: ❋ 79% (34% 7d)"
 
         case (.subscripts, .es):
-            return "2B. Subíndices con barra: ✳︎ 34%₇𝒹 79%₅ₕ │ ⬢ …"
+            return "2B. Subíndices con barra: ❋ 79%₅ₕ 34%₇𝒹 │ ⏣ …"
         case (.subscripts, .en):
-            return "2B. Subscripts with bar: ✳︎ 34%₇𝒹 79%₅ₕ │ ⬢ …"
+            return "2B. Subscripts with bar: ❋ 79%₅ₕ 34%₇𝒹 │ ⏣ …"
         case (.subscripts, .de):
-            return "2B. Tiefgestellt mit Trennstrich: ✳︎ 34%₇𝒹 79%₅ₕ │ ⬢ …"
+            return "2B. Tiefgestellt mit Trennstrich: ❋ 79%₅ₕ 34%₇𝒹 │ ⏣ …"
         case (.subscripts, .it):
-            return "2B. Pedici con barra: ✳︎ 34%₇𝒹 79%₅ₕ │ ⬢ …"
+            return "2B. Pedici con barra: ❋ 79%₅ₕ 34%₇𝒹 │ ⏣ …"
         case (.subscripts, .pt):
-            return "2B. Subscritos com barra: ✳︎ 34%₇𝒹 79%₅ₕ │ ⬢ …"
+            return "2B. Subscritos com barra: ❋ 79%₅ₕ 34%₇𝒹 │ ⏣ …"
 
         case (.capsulePills, .es):
-            return "3. Mini cápsulas: [ ✳︎ 34% · 79% ]"
+            return "3. Mini cápsulas: [ ❋ 79% 5h · 34% 7d ]"
         case (.capsulePills, .en):
-            return "3. Mini capsules: [ ✳︎ 34% · 79% ]"
+            return "3. Mini capsules: [ ❋ 79% 5h · 34% 7d ]"
         case (.capsulePills, .de):
-            return "3. Mini-Kapseln: [ ✳︎ 34% · 79% ]"
+            return "3. Mini-Kapseln: [ ❋ 79% 5h · 34% 7d ]"
         case (.capsulePills, .it):
-            return "3. Mini capsule: [ ✳︎ 34% · 79% ]"
+            return "3. Mini capsule: [ ❋ 79% 5h · 34% 7d ]"
         case (.capsulePills, .pt):
-            return "3. Mini cápsulas: [ ✳︎ 34% · 79% ]"
+            return "3. Mini cápsulas: [ ❋ 79% 5h · 34% 7d ]"
 
         case (.inlineDot, .es):
-            return "4. Clásico en línea: ✳︎ 34% 7d · 79% 5h"
+            return "4. Clásico en línea: ❋ 79% 5h · 34% 7d"
         case (.inlineDot, .en):
-            return "4. Classic inline: ✳︎ 34% 7d · 79% 5h"
+            return "4. Classic inline: ❋ 79% 5h · 34% 7d"
         case (.inlineDot, .de):
-            return "4. Klassisch einzeilig: ✳︎ 34% 7d · 79% 5h"
+            return "4. Klassisch einzeilig: ❋ 79% 5h · 34% 7d"
         case (.inlineDot, .it):
-            return "4. Classico in linea: ✳︎ 34% 7d · 79% 5h"
+            return "4. Classico in linea: ❋ 79% 5h · 34% 7d"
         case (.inlineDot, .pt):
-            return "4. Clássico em linha: ✳︎ 34% 7d · 79% 5h"
+            return "4. Clássico em linha: ❋ 79% 5h · 34% 7d"
         }
     }
 
@@ -625,7 +680,9 @@ public enum L10n {
     }
 
     public static func poolOptionLabel(_ pool: PoolDefinition, _ lang: AppLanguage) -> String {
-        "\(poolCategoryTitle(pool.category, lang)) (\(pool.shortName))"
+        pool.id == "codex-review"
+            ? codexReviewTitle(lang)
+            : "\(poolCategoryTitle(pool.category, lang)) (\(pool.shortName))"
     }
 
     public static func percentageModeSectionTitle(_ lang: AppLanguage) -> String {
