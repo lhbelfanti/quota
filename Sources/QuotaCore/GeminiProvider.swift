@@ -281,244 +281,153 @@ public struct GeminiProviderClient: Sendable {
         }
     }
 
+    private static func usedPercent(fromRemainingFraction fraction: Double) -> Double {
+        100.0 - min(max(fraction * 100.0, 0.0), 100.0)
+    }
+
+    private static func quotaEntry(
+        for pool: PoolDefinition,
+        in models: [String: FetchAvailableModelsResponse.ModelEntry]
+    ) -> FetchAvailableModelsResponse.ModelEntry? {
+        pool.apiModelKeys.compactMap { models[$0] }.first { $0.quotaInfo?.remainingFraction != nil }
+    }
+
     public static func parseAntigravityMetrics(
         summary: RetrieveUserQuotaSummaryResponse?,
         modelsResponse: FetchAvailableModelsResponse
     ) -> [QuotaMetric] {
-        var metrics: [QuotaMetric] = []
+        let pools = ModelCatalog.pools(for: .gemini)
+        guard let core = pools.first(where: { $0.category == .core }) else { return [] }
 
-        if let groups = summary?.groups, !groups.isEmpty {
-            var argonMetrics: [QuotaMetric] = []
-            var gemini5h: QuotaMetric?
-            var geminiWeekly: QuotaMetric?
-            var thirdParty5h: QuotaMetric?
-            var thirdPartyWeekly: QuotaMetric?
-            var otherMetrics: [QuotaMetric] = []
+        var byPool: [String: [QuotaMetric]] = [:]
+        var otherMetrics: [QuotaMetric] = []
 
-            for group in groups {
-                let groupNameLower = group.displayName?.lowercased() ?? ""
-                let isArgonGroup = groupNameLower.contains("argon")
-                let isThirdParty = groupNameLower.contains("claude") || groupNameLower.contains("gpt")
+        for group in summary?.groups ?? [] {
+            for bucket in group.buckets ?? [] {
+                guard let fraction = bucket.remainingFraction else { continue }
+                let usedPct = usedPercent(fromRemainingFraction: fraction)
+                let resetDate = parseISO8601(bucket.resetTime)
+                let bId = bucket.bucketId ?? ""
+                let pool = pools.first {
+                    $0.category != .core && ($0.matches(group.displayName ?? "") || $0.matches(bId))
+                } ?? core
 
-                for bucket in group.buckets ?? [] {
-                    guard let fraction = bucket.remainingFraction else { continue }
-                    let remainingPct = min(max(fraction * 100.0, 0.0), 100.0)
-                    let usedPct = max(0.0, 100.0 - remainingPct)
-                    let resetDate = parseISO8601(bucket.resetTime)
-                    let bId = bucket.bucketId ?? ""
-                    let window = bucket.window?.lowercased() ?? ""
+                let window: QuotaWindowKind?
+                switch bucket.window?.lowercased() {
+                case "5h": window = .burst5h
+                case "weekly": window = .weekly7d
+                // Los pools exclusivos (Argon) solo tienen cuota semanal aunque la API no informe la ventana.
+                default: window = pool.category == .dedicated ? .weekly7d : nil
+                }
 
-                    if isArgonGroup || bId.lowercased().contains("argon") {
-                        let winSuffix = window == "5h" ? "5h" : "7d"
-                        let winKind: QuotaWindowKind = window == "5h" ? .burst5h : .weekly7d
-                        argonMetrics.append(
-                            QuotaMetric(
-                                id: "agy-\(bId.isEmpty ? "argon-\(winSuffix)" : bId)",
-                                label: "Gemini 4 Argon · Orchestrator (\(winSuffix))",
-                                usedPercent: usedPct,
-                                resetsAt: resetDate,
-                                detail: group.description ?? "Pool exclusivo de Gemini 4 Argon (Low/Medium/High) y Orchestrator",
-                                poolId: "agy-argon",
-                                poolTitle: "Pool Exclusivo",
-                                poolSubtitle: "Gemini 4 Argon (Low / Med / High) · Orchestrator",
-                                poolCategory: .dedicated,
-                                windowKind: winKind
-                            )
-                        )
-                    } else if bId == "gemini-5h" || (!isThirdParty && window == "5h") {
-                        gemini5h = QuotaMetric(
-                            id: "agy-gemini-5h",
-                            label: "Gemini Hydrogen / 3.8 Flash / Pro (5h)",
+                if let window {
+                    byPool[pool.id, default: []].append(
+                        pool.metric(
+                            id: "\(pool.id)-\(window == .burst5h ? "5h" : "weekly")",
+                            window: window,
                             usedPercent: usedPct,
                             resetsAt: resetDate,
-                            detail: "Gemini 4 Hydrogen, Gemini 3.8 Flash, Gemini 2.5 Pro",
-                            poolId: "agy-gemini",
-                            poolTitle: "Pool General",
-                            poolSubtitle: "Gemini 4 Hydrogen · Gemini 3.8 Flash · Gemini 2.5 Pro",
-                            poolCategory: .core,
-                            windowKind: .burst5h
+                            detail: bucket.description ?? group.description
                         )
-                    } else if bId == "gemini-weekly" || (!isThirdParty && window == "weekly") {
-                        geminiWeekly = QuotaMetric(
-                            id: "agy-gemini-weekly",
-                            label: "Gemini Hydrogen / 3.8 Flash / Pro (7d)",
+                    )
+                } else {
+                    otherMetrics.append(
+                        QuotaMetric(
+                            id: "agy-\(bId.isEmpty ? UUID().uuidString : bId)",
+                            label: bucket.displayName ?? group.displayName ?? bId,
                             usedPercent: usedPct,
                             resetsAt: resetDate,
-                            detail: "Límite semanal compartido de Gemini Hydrogen, Flash y Pro",
-                            poolId: "agy-gemini",
-                            poolTitle: "Pool General",
-                            poolSubtitle: "Gemini 4 Hydrogen · Gemini 3.8 Flash · Gemini 2.5 Pro",
-                            poolCategory: .core,
-                            windowKind: .weekly7d
+                            detail: bucket.description ?? group.description
                         )
-                    } else if bId == "3p-5h" || (isThirdParty && window == "5h") {
-                        thirdParty5h = QuotaMetric(
-                            id: "agy-3p-5h",
-                            label: "Claude 5.5 & GPT-OSS 120B (5h)",
-                            usedPercent: usedPct,
-                            resetsAt: resetDate,
-                            detail: "Claude Opus 5.5, Claude Sonnet 5.5, GPT-OSS 120B",
-                            poolId: "agy-3p",
-                            poolTitle: "Pool de Partners",
-                            poolSubtitle: "Claude Opus 5.5 · Claude Sonnet 5.5 · GPT-OSS 120B",
-                            poolCategory: .partner,
-                            windowKind: .burst5h
-                        )
-                    } else if bId == "3p-weekly" || (isThirdParty && window == "weekly") {
-                        thirdPartyWeekly = QuotaMetric(
-                            id: "agy-3p-weekly",
-                            label: "Claude 5.5 & GPT-OSS 120B (7d)",
-                            usedPercent: usedPct,
-                            resetsAt: resetDate,
-                            detail: "Límite semanal compartido Claude + GPT-OSS",
-                            poolId: "agy-3p",
-                            poolTitle: "Pool de Partners",
-                            poolSubtitle: "Claude Opus 5.5 · Claude Sonnet 5.5 · GPT-OSS 120B",
-                            poolCategory: .partner,
-                            windowKind: .weekly7d
-                        )
-                    } else {
-                        otherMetrics.append(
-                            QuotaMetric(
-                                id: "agy-\(bId.isEmpty ? UUID().uuidString : bId)",
-                                label: bucket.displayName ?? group.displayName ?? bId,
-                                usedPercent: usedPct,
-                                resetsAt: resetDate,
-                                detail: bucket.description ?? group.description
-                            )
-                        )
-                    }
+                    )
                 }
             }
+        }
 
-            // If Argon was not in summary groups, check fetchAvailableModels for gemini-4-argon-*
-            if argonMetrics.isEmpty,
-               let models = modelsResponse.models,
-               let argonEntry = models["gemini-4-argon-medium"] ?? models["gemini-4-argon-low"] ?? models["gemini-4-argon-high"] ?? models["gemini-pro-orchestrator-g1-pro"],
-               let fraction = argonEntry.quotaInfo?.remainingFraction {
-                let remainingPct = min(max(fraction * 100.0, 0.0), 100.0)
-                let usedPct = max(0.0, 100.0 - remainingPct)
-                argonMetrics.append(
-                    QuotaMetric(
-                        id: "agy-argon-weekly",
-                        label: "Gemini 4 Argon · Orchestrator (7d)",
-                        usedPercent: usedPct,
-                        resetsAt: parseISO8601(argonEntry.quotaInfo?.resetTime),
-                        detail: "Pool exclusivo de Gemini 4 Argon y Orchestrator"
-                    )
+        if byPool.isEmpty && otherMetrics.isEmpty {
+            return parseAvailableModelsMetrics(from: modelsResponse)
+        }
+
+        // Si un pool exclusivo no vino en el resumen, se toma de fetchAvailableModels.
+        for pool in pools where pool.category == .dedicated && byPool[pool.id] == nil {
+            guard let entry = quotaEntry(for: pool, in: modelsResponse.models ?? [:]),
+                  let fraction = entry.quotaInfo?.remainingFraction else { continue }
+            byPool[pool.id] = [
+                pool.metric(
+                    id: "\(pool.id)-weekly",
+                    window: .weekly7d,
+                    usedPercent: usedPercent(fromRemainingFraction: fraction),
+                    resetsAt: parseISO8601(entry.quotaInfo?.resetTime)
                 )
-            }
-
-            // Orden estricto: 1° Pool General (gemini5h + geminiWeekly), 2° Pool Exclusivo (argonMetrics), 3° Pool de Partners (thirdParty5h + thirdPartyWeekly)
-            metrics.append(contentsOf: [gemini5h, geminiWeekly].compactMap { $0 })
-            metrics.append(contentsOf: argonMetrics)
-            metrics.append(contentsOf: [thirdParty5h, thirdPartyWeekly].compactMap { $0 })
-            metrics.append(contentsOf: otherMetrics)
+            ]
         }
 
-        if !metrics.isEmpty {
-            return metrics
-        }
-
-        return parseAvailableModelsMetrics(from: modelsResponse)
+        // Orden estable sin depender de la API: por pool según el catálogo y, dentro de cada uno, 5h antes que 7d.
+        return pools.flatMap { pool in
+            (byPool[pool.id] ?? []).sorted { $0.windowKind == .burst5h && $1.windowKind != .burst5h }
+        } + otherMetrics
     }
 
     public static func parseAvailableModelsMetrics(from response: FetchAvailableModelsResponse) -> [QuotaMetric] {
         guard let models = response.models, !models.isEmpty else { return [] }
 
+        let pools = ModelCatalog.pools(for: .gemini)
+        let nonCore = pools.filter { $0.category != .core }
         var metrics: [QuotaMetric] = []
         var seenFractionsAndReset: Set<String> = []
 
-        // 1. Gemini Hydrogen / 3.8 Flash / 2.5 Pro pool (Pool General primero)
-        let preferredGeminiKeys = [
-            ("gemini-4-hydrogen-medium", "Gemini Hydrogen / 3.8 Flash / Pro (5h)"),
-            ("gemini-3.8-flash-high", "Gemini Hydrogen / 3.8 Flash / Pro (5h)"),
-            ("gemini-2.5-pro", "Gemini Hydrogen / Flash / Pro (5h)"),
-            ("gemini-3-flash", "Gemini 3 Flash (5h)"),
-            ("gemini-3.1-flash-lite", "Gemini 3.1 Flash Lite (5h)")
-        ]
-
-        // Mark Argon signature so it isn't deduplicated into general Gemini keys
-        if let argonEntry = models["gemini-4-argon-medium"] ?? models["gemini-4-argon-low"] ?? models["gemini-4-argon-high"] ?? models["gemini-pro-orchestrator-g1-pro"],
-           let fraction = argonEntry.quotaInfo?.remainingFraction {
-            let resetStr = argonEntry.quotaInfo?.resetTime ?? ""
-            let signature = String(format: "%.3f-%@", fraction, resetStr)
-            seenFractionsAndReset.insert(signature)
+        func signature(_ entry: FetchAvailableModelsResponse.ModelEntry, _ fraction: Double) -> String {
+            String(format: "%.3f-%@", fraction, entry.quotaInfo?.resetTime ?? "")
         }
 
-        for (key, title) in preferredGeminiKeys {
-            guard let entry = models[key],
-                  let fraction = entry.quotaInfo?.remainingFraction else { continue }
-            let resetStr = entry.quotaInfo?.resetTime ?? ""
-            let signature = String(format: "%.3f-%@", fraction, resetStr)
-            let remainingPct = min(max(fraction * 100.0, 0.0), 100.0)
-            let usedPct = max(0.0, 100.0 - remainingPct)
-
-            if seenFractionsAndReset.contains(signature) {
-                continue
+        // Reservar la firma de los pools exclusivos para que no se deduplique dentro del Pool General
+        for pool in nonCore where pool.category == .dedicated {
+            if let entry = quotaEntry(for: pool, in: models), let fraction = entry.quotaInfo?.remainingFraction {
+                seenFractionsAndReset.insert(signature(entry, fraction))
             }
-            seenFractionsAndReset.insert(signature)
-
-            metrics.append(
-                QuotaMetric(
-                    id: "agy-\(key)",
-                    label: title,
-                    usedPercent: usedPct,
-                    resetsAt: parseISO8601(entry.quotaInfo?.resetTime),
-                    detail: "Gemini 4 Hydrogen, 3.8 Flash, 2.5 Pro"
-                )
-            )
         }
 
-        // 2. Also check if any other Gemini model has a distinct quota bucket
-        for (key, entry) in models.sorted(by: { $0.key < $1.key }) where key.hasPrefix("gemini-") && !key.contains("argon") && !key.contains("orchestrator") {
-            guard let displayName = entry.displayName,
-                  let fraction = entry.quotaInfo?.remainingFraction else { continue }
-            let resetStr = entry.quotaInfo?.resetTime ?? ""
-            let signature = String(format: "%.3f-%@", fraction, resetStr)
-            guard !seenFractionsAndReset.contains(signature) else { continue }
-            seenFractionsAndReset.insert(signature)
+        if let core = pools.first(where: { $0.category == .core }) {
+            for key in core.apiModelKeys {
+                guard let entry = models[key],
+                      let fraction = entry.quotaInfo?.remainingFraction,
+                      seenFractionsAndReset.insert(signature(entry, fraction)).inserted else { continue }
+                metrics.append(
+                    core.metric(
+                        id: "agy-\(key)",
+                        window: .burst5h,
+                        usedPercent: usedPercent(fromRemainingFraction: fraction),
+                        resetsAt: parseISO8601(entry.quotaInfo?.resetTime)
+                    )
+                )
+            }
+        }
 
-            let remainingPct = min(max(fraction * 100.0, 0.0), 100.0)
-            let usedPct = max(0.0, 100.0 - remainingPct)
+        // Otros modelos Gemini con un bucket de cuota distinto
+        for (key, entry) in models.sorted(by: { $0.key < $1.key })
+        where key.hasPrefix("gemini-") && !nonCore.contains(where: { $0.matches(key) }) {
+            guard let displayName = entry.displayName,
+                  let fraction = entry.quotaInfo?.remainingFraction,
+                  seenFractionsAndReset.insert(signature(entry, fraction)).inserted else { continue }
             metrics.append(
                 QuotaMetric(
                     id: "agy-\(key)",
                     label: displayName,
-                    usedPercent: usedPct,
+                    usedPercent: usedPercent(fromRemainingFraction: fraction),
                     resetsAt: parseISO8601(entry.quotaInfo?.resetTime)
                 )
             )
         }
 
-        // 3. Separate Gemini 4 Argon pool (Pool Exclusivo segundo)
-        if let argonEntry = models["gemini-4-argon-medium"] ?? models["gemini-4-argon-low"] ?? models["gemini-4-argon-high"] ?? models["gemini-pro-orchestrator-g1-pro"],
-           let fraction = argonEntry.quotaInfo?.remainingFraction {
-            let remainingPct = min(max(fraction * 100.0, 0.0), 100.0)
-            let usedPct = max(0.0, 100.0 - remainingPct)
+        for pool in nonCore {
+            guard let entry = quotaEntry(for: pool, in: models),
+                  let fraction = entry.quotaInfo?.remainingFraction else { continue }
             metrics.append(
-                QuotaMetric(
-                    id: "agy-argon-pool",
-                    label: "Gemini 4 Argon · Orchestrator (7d)",
-                    usedPercent: usedPct,
-                    resetsAt: parseISO8601(argonEntry.quotaInfo?.resetTime),
-                    detail: "Pool exclusivo de Gemini 4 Argon"
-                )
-            )
-        }
-
-        // 4. Antigravity third-party model quota (Pool de Partners tercero: Claude Opus/Sonnet 5.5 + GPT-OSS 120B)
-        if let agy3P = models["claude-sonnet-5-5-high"] ?? models["claude-opus-5-5-high"] ?? models["gpt-oss-120b-medium"],
-           let fraction = agy3P.quotaInfo?.remainingFraction {
-            let remainingPct = min(max(fraction * 100.0, 0.0), 100.0)
-            let usedPct = max(0.0, 100.0 - remainingPct)
-            metrics.append(
-                QuotaMetric(
-                    id: "agy-claude-pool",
-                    label: "Claude 5.5 & GPT-OSS 120B (5h)",
-                    usedPercent: usedPct,
-                    resetsAt: parseISO8601(agy3P.quotaInfo?.resetTime),
-                    detail: "Claude Opus 5.5, Sonnet 5.5, GPT-OSS 120B"
+                pool.metric(
+                    id: "\(pool.id)-pool",
+                    window: pool.category == .dedicated ? .weekly7d : .burst5h,
+                    usedPercent: usedPercent(fromRemainingFraction: fraction),
+                    resetsAt: parseISO8601(entry.quotaInfo?.resetTime)
                 )
             )
         }
@@ -568,11 +477,9 @@ public struct GeminiProviderClient: Sendable {
     }
 
     private static func formatModelName(_ raw: String) -> String {
-        let cleaned = raw.replacingOccurrences(of: "models/", with: "")
-        if cleaned.contains("gemini-2.5-pro") { return "Gemini 2.5 Pro" }
-        if cleaned.contains("gemini-2.5-flash") { return "Gemini 2.5 Flash" }
-        if cleaned.contains("gemini-3") { return cleaned.replacingOccurrences(of: "gemini-", with: "Gemini ").capitalized }
-        return cleaned
+        raw.replacingOccurrences(of: "models/", with: "")
+            .replacingOccurrences(of: "-", with: " ")
+            .capitalized
     }
 
     private func postAntigravity<T: Decodable>(

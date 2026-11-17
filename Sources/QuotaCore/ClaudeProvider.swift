@@ -132,66 +132,23 @@ public struct ClaudeProviderClient: Sendable {
     public static func parseMetrics(from usage: UsageResponse) -> [QuotaMetric] {
         var metrics: [QuotaMetric] = []
 
-        if let fiveHour = usage.five_hour, let util = fiveHour.utilization {
-            metrics.append(
-                QuotaMetric(
-                    id: "claude-5h",
-                    label: "Sesión (5h)",
-                    usedPercent: util,
-                    resetsAt: parseISO8601(fiveHour.resets_at),
-                    poolId: "claude-general",
-                    poolTitle: "Pool General",
-                    poolSubtitle: "Claude Sonnet · Haiku · Opus base",
-                    poolCategory: .core,
-                    windowKind: .burst5h
-                )
-            )
+        if let general = ModelCatalog.pool(id: "claude-general") {
+            if let fiveHour = usage.five_hour, let util = fiveHour.utilization {
+                metrics.append(general.metric(id: "claude-5h", window: .burst5h, usedPercent: util, resetsAt: parseISO8601(fiveHour.resets_at)))
+            }
+            if let sevenDay = usage.seven_day, let util = sevenDay.utilization {
+                metrics.append(general.metric(id: "claude-7d", window: .weekly7d, usedPercent: util, resetsAt: parseISO8601(sevenDay.resets_at)))
+            }
         }
 
-        if let sevenDay = usage.seven_day, let util = sevenDay.utilization {
+        for (name, window) in [("Opus", usage.seven_day_opus), ("Sonnet", usage.seven_day_sonnet)] {
+            guard let window, let util = window.utilization else { continue }
             metrics.append(
-                QuotaMetric(
-                    id: "claude-7d",
-                    label: "Semanal (7d)",
+                ModelCatalog.claudeScopedPool(named: name).metric(
+                    id: "claude-\(name.lowercased())-7d",
+                    window: .weekly7d,
                     usedPercent: util,
-                    resetsAt: parseISO8601(sevenDay.resets_at),
-                    poolId: "claude-general",
-                    poolTitle: "Pool General",
-                    poolSubtitle: "Claude Sonnet · Haiku · Opus base",
-                    poolCategory: .core,
-                    windowKind: .weekly7d
-                )
-            )
-        }
-
-        if let opus = usage.seven_day_opus, let util = opus.utilization {
-            metrics.append(
-                QuotaMetric(
-                    id: "claude-opus-7d",
-                    label: "Opus (7d)",
-                    usedPercent: util,
-                    resetsAt: parseISO8601(opus.resets_at),
-                    poolId: "claude-opus",
-                    poolTitle: "Pool Exclusivo",
-                    poolSubtitle: "Claude Opus",
-                    poolCategory: .dedicated,
-                    windowKind: .weekly7d
-                )
-            )
-        }
-
-        if let sonnet = usage.seven_day_sonnet, let util = sonnet.utilization {
-            metrics.append(
-                QuotaMetric(
-                    id: "claude-sonnet-7d",
-                    label: "Sonnet (7d)",
-                    usedPercent: util,
-                    resetsAt: parseISO8601(sonnet.resets_at),
-                    poolId: "claude-sonnet",
-                    poolTitle: "Pool Exclusivo",
-                    poolSubtitle: "Claude Sonnet",
-                    poolCategory: .dedicated,
-                    windowKind: .weekly7d
+                    resetsAt: parseISO8601(window.resets_at)
                 )
             )
         }
@@ -205,30 +162,21 @@ public struct ClaudeProviderClient: Sendable {
             )
 
             for (index, limit) in limits.enumerated() where limit.kind == "weekly_scoped" {
-                if let modelName = limit.ScopeModel?.model?.display_name,
-                   let pct = limit.percent {
-                    let id = "claude-scoped-\(modelName.lowercased())"
-                    if !metrics.contains(where: { $0.id == id }) {
-                        let share = sharesByIndex[index]
-                        let allowancePct = share?.allowance_percent_of_weekly ?? 50.0
-                        let usedOfWeeklyPct = share?.used_percent_of_weekly
-                        metrics.append(
-                            QuotaMetric(
-                                id: id,
-                                label: "\(modelName) (7d)",
-                                usedPercent: pct,
-                                resetsAt: parseISO8601(limit.resets_at),
-                                poolId: "claude-\(modelName.lowercased())",
-                                poolTitle: "Pool Exclusivo",
-                                poolSubtitle: "Claude \(modelName)",
-                                poolCategory: .dedicated,
-                                windowKind: .weekly7d,
-                                weeklyAllowancePercentOfGeneral: allowancePct,
-                                weeklyUsedPercentOfGeneral: usedOfWeeklyPct
-                            )
-                        )
-                    }
-                }
+                guard let modelName = limit.ScopeModel?.model?.display_name,
+                      let pct = limit.percent else { continue }
+                let id = "claude-scoped-\(modelName.lowercased())"
+                guard !metrics.contains(where: { $0.id == id }) else { continue }
+                let share = sharesByIndex[index]
+                metrics.append(
+                    ModelCatalog.claudeScopedPool(named: modelName).metric(
+                        id: id,
+                        window: .weekly7d,
+                        usedPercent: pct,
+                        resetsAt: parseISO8601(limit.resets_at),
+                        weeklyAllowancePercentOfGeneral: share?.allowance_percent_of_weekly ?? 50.0,
+                        weeklyUsedPercentOfGeneral: share?.used_percent_of_weekly
+                    )
+                )
             }
         }
 

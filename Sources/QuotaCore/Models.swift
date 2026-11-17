@@ -42,9 +42,9 @@ public enum AIProviderKind: String, Codable, CaseIterable, Identifiable, Sendabl
 
 /// Tipo de ventana de cuota según su alcance temporal y prioridad operativa.
 public enum QuotaWindowKind: String, Codable, Equatable, Sendable {
-    /// Ventana de ráfaga o sesión inmediata (5 horas) — prioridad primaria en tiempo real.
+    /// Ventana de ráfaga o sesión inmediata (5 horas) — cuota secundaria.
     case burst5h = "burst5h"
-    /// Presupuesto acumulado semanal (7 días) — horizonte de largo plazo.
+    /// Presupuesto acumulado semanal (7 días) — cuota principal.
     case weekly7d = "weekly7d"
     /// Otra ventana especial (ej. Code Review o créditos adicionales).
     case custom = "custom"
@@ -186,34 +186,27 @@ public struct QuotaMetric: Codable, Identifiable, Equatable, Sendable {
             winKind = .custom
         }
 
-        // Claude pools
+        func resolved(_ pool: PoolDefinition) -> (poolId: String, poolTitle: String, poolSubtitle: String?, poolCategory: QuotaPoolCategory, windowKind: QuotaWindowKind) {
+            (pool.id, L10n.poolCategoryTitle(pool.category, .es), pool.subtitle, pool.category, winKind)
+        }
+
         if lowerId.hasPrefix("claude-") {
-            if lowerId == "claude-5h" || lowerId == "claude-7d" {
-                return ("claude-general", "Pool General", "Claude Sonnet · Haiku · Opus base", .core, winKind)
+            if lowerId == "claude-5h" || lowerId == "claude-7d", let general = ModelCatalog.pool(id: "claude-general") {
+                return resolved(general)
             }
             let cleanName = label
                 .replacingOccurrences(of: " (7d)", with: "")
                 .replacingOccurrences(of: " (5h)", with: "")
-            return ("claude-\(cleanName.lowercased())", "Pool Exclusivo", "Claude \(cleanName)", .dedicated, winKind)
+            return resolved(ModelCatalog.claudeScopedPool(named: cleanName))
         }
 
-        // Codex pools
-        if lowerId.hasPrefix("codex-") {
-            if lowerId == "codex-review" {
-                return ("codex-review", "Pool Exclusivo", "Code Review (PRs)", .dedicated, winKind)
-            }
-            return ("codex-general", "Pool General", "GPT-5 · o3 · Codex CLI", .core, winKind)
+        let isCodex = lowerId.hasPrefix("codex-")
+        let candidates = ModelCatalog.pools(for: isCodex ? .codex : .gemini)
+        if let match = candidates.first(where: { $0.matches(lowerId) || $0.matches(lowerLabel) }) {
+            return resolved(match)
         }
-
-        // Gemini / Antigravity pools
-        if lowerId.contains("argon") || lowerLabel.contains("argon") {
-            return ("agy-argon", "Pool Exclusivo", "Gemini 4 Argon (Low / Med / High) · Orchestrator", .dedicated, winKind)
-        }
-        if lowerId.contains("3p") || lowerLabel.contains("claude") || lowerLabel.contains("gpt-oss") {
-            return ("agy-3p", "Pool de Partners", "Claude Opus 5.5 · Claude Sonnet 5.5 · GPT-OSS 120B", .partner, winKind)
-        }
-        if lowerId.hasPrefix("agy-") {
-            return ("agy-gemini", "Pool General", "Gemini 4 Hydrogen · Gemini 3.8 Flash · Gemini 2.5 Pro", .core, winKind)
+        if isCodex || lowerId.hasPrefix("agy-"), let core = candidates.first(where: { $0.category == .core }) {
+            return resolved(core)
         }
 
         return ("default-\(id)", label, detail, .core, winKind)
@@ -277,9 +270,9 @@ public struct QuotaPoolGroup: Identifiable, Equatable, Sendable {
         burst5hMetric ?? sharedBurst5hMetric
     }
 
-    /// Métrica principal del pool (prioriza 5h propia si existe, o 7d en pools semanales como Argon/Fable).
+    /// Métrica principal del pool: la semanal (7d); la de 5h solo si el pool no tiene semanal.
     public var primaryMetric: QuotaMetric? {
-        burst5hMetric ?? weekly7dMetric ?? otherMetrics.first
+        weekly7dMetric ?? burst5hMetric ?? otherMetrics.first
     }
 }
 
@@ -379,15 +372,6 @@ public struct ProviderQuotaSnapshot: Codable, Identifiable, Equatable, Sendable 
             }
             return lhs.offset < rhs.offset
         }.map(\.element)
-    }
-
-    /// Devuelve el pool correspondiente a la categoría elegida por el usuario (o el Pool General / primero disponible como fallback).
-    public func pool(for preferredCategory: QuotaPoolCategory) -> QuotaPoolGroup? {
-        let allPools = pools
-        if let exact = allPools.first(where: { $0.category == preferredCategory }) {
-            return exact
-        }
-        return allPools.first
     }
 
     /// Primary remaining percentage across the most restrictive or primary window

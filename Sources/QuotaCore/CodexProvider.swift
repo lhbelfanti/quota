@@ -106,74 +106,37 @@ public struct CodexProviderClient: Sendable {
     public static func parseMetrics(from usage: WhamUsageResponse) -> [QuotaMetric] {
         var metrics: [QuotaMetric] = []
 
-        if let primary = usage.rate_limit?.primary_window,
-           let used = primary.used_percent {
-            let label = windowLabel(seconds: primary.limit_window_seconds, fallback: "Ventana 5h")
-            let resetDate = primary.reset_at.map { Date(timeIntervalSince1970: $0) }
-            metrics.append(
-                QuotaMetric(
+        if let general = ModelCatalog.pool(id: "codex-general") {
+            if let primary = usage.rate_limit?.primary_window, let used = primary.used_percent {
+                metrics.append(general.metric(
                     id: "codex-primary",
-                    label: label,
+                    window: .burst5h,
                     usedPercent: used,
-                    resetsAt: resetDate,
-                    poolId: "codex-general",
-                    poolTitle: "Pool General",
-                    poolSubtitle: "GPT-5 · o3 · Codex CLI",
-                    poolCategory: .core,
-                    windowKind: .burst5h
-                )
-            )
-        }
-
-        if let secondary = usage.rate_limit?.secondary_window,
-           let used = secondary.used_percent {
-            let label = windowLabel(seconds: secondary.limit_window_seconds, fallback: "Semanal (7d)")
-            let resetDate = secondary.reset_at.map { Date(timeIntervalSince1970: $0) }
-            metrics.append(
-                QuotaMetric(
+                    resetsAt: primary.reset_at.map { Date(timeIntervalSince1970: $0) }
+                ))
+            }
+            if let secondary = usage.rate_limit?.secondary_window, let used = secondary.used_percent {
+                metrics.append(general.metric(
                     id: "codex-secondary",
-                    label: label,
+                    window: .weekly7d,
                     usedPercent: used,
-                    resetsAt: resetDate,
-                    poolId: "codex-general",
-                    poolTitle: "Pool General",
-                    poolSubtitle: "GPT-5 · o3 · Codex CLI",
-                    poolCategory: .core,
-                    windowKind: .weekly7d
-                )
-            )
+                    resetsAt: secondary.reset_at.map { Date(timeIntervalSince1970: $0) }
+                ))
+            }
         }
 
-        if let reviewPrimary = usage.code_review_rate_limit?.primary_window,
+        if let review = ModelCatalog.pool(id: "codex-review"),
+           let reviewPrimary = usage.code_review_rate_limit?.primary_window,
            let used = reviewPrimary.used_percent {
-            let resetDate = reviewPrimary.reset_at.map { Date(timeIntervalSince1970: $0) }
-            metrics.append(
-                QuotaMetric(
-                    id: "codex-review",
-                    label: "Code Review",
-                    usedPercent: used,
-                    resetsAt: resetDate,
-                    poolId: "codex-review",
-                    poolTitle: "Pool Code Review",
-                    poolSubtitle: "Revisiones automáticas de PR",
-                    poolCategory: .dedicated,
-                    windowKind: .burst5h
-                )
-            )
+            metrics.append(review.metric(
+                id: "codex-review",
+                window: .burst5h,
+                usedPercent: used,
+                resetsAt: reviewPrimary.reset_at.map { Date(timeIntervalSince1970: $0) }
+            ))
         }
 
         return metrics
-    }
-
-    private static func windowLabel(seconds: Int?, fallback: String) -> String {
-        guard let seconds, seconds > 0 else { return fallback }
-        let hours = seconds / 3600
-        if hours == 5 { return "Sesión (5h)" }
-        if hours == 168 { return "Semanal (7d)" }
-        if hours >= 24 {
-            return "Ventana (\(hours / 24)d)"
-        }
-        return "Ventana (\(hours)h)"
     }
 
     private func fetchWhamUsage(accessToken: String, accountId: String?) async throws -> WhamUsageResponse {
