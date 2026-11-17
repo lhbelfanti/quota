@@ -106,36 +106,31 @@ public struct CodexProviderClient: Sendable {
     public static func parseMetrics(from usage: WhamUsageResponse) -> [QuotaMetric] {
         var metrics: [QuotaMetric] = []
 
-        if let general = ModelCatalog.pool(id: "codex-general") {
-            if let primary = usage.rate_limit?.primary_window, let used = primary.used_percent {
-                metrics.append(general.metric(
-                    id: "codex-primary",
-                    window: .burst5h,
-                    usedPercent: used,
-                    resetsAt: primary.reset_at.map { Date(timeIntervalSince1970: $0) }
-                ))
+        func append(_ window: WhamUsageResponse.RateLimit.Window?, pool: PoolDefinition, id: String, fallback: QuotaWindowKind) {
+            guard let window, let used = window.used_percent else { return }
+            let kind: QuotaWindowKind
+            switch window.limit_window_seconds {
+            case 18000: kind = .burst5h
+            case 604800: kind = .weekly7d
+            case nil: kind = fallback
+            default: kind = .custom
             }
-            if let secondary = usage.rate_limit?.secondary_window, let used = secondary.used_percent {
-                metrics.append(general.metric(
-                    id: "codex-secondary",
-                    window: .weekly7d,
-                    usedPercent: used,
-                    resetsAt: secondary.reset_at.map { Date(timeIntervalSince1970: $0) }
-                ))
-            }
-        }
-
-        if let review = ModelCatalog.pool(id: "codex-review"),
-           let reviewPrimary = usage.code_review_rate_limit?.primary_window,
-           let used = reviewPrimary.used_percent {
-            metrics.append(review.metric(
-                id: "codex-review",
-                window: .burst5h,
+            metrics.append(pool.metric(
+                id: id,
+                window: kind,
                 usedPercent: used,
-                resetsAt: reviewPrimary.reset_at.map { Date(timeIntervalSince1970: $0) }
+                resetsAt: window.reset_at.map { Date(timeIntervalSince1970: $0) }
             ))
         }
 
+        if let general = ModelCatalog.pool(id: "codex-general") {
+            append(usage.rate_limit?.primary_window, pool: general, id: "codex-primary", fallback: .burst5h)
+            append(usage.rate_limit?.secondary_window, pool: general, id: "codex-secondary", fallback: .weekly7d)
+        }
+        if let review = ModelCatalog.pool(id: "codex-review") {
+            append(usage.code_review_rate_limit?.primary_window, pool: review, id: "codex-review-primary", fallback: .custom)
+            append(usage.code_review_rate_limit?.secondary_window, pool: review, id: "codex-review-secondary", fallback: .custom)
+        }
         return metrics
     }
 

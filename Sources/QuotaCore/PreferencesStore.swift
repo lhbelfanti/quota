@@ -52,7 +52,7 @@ public enum QuotaDisplayMode: String, Codable, CaseIterable, Identifiable, Senda
 public enum SummaryWindowMode: String, Codable, CaseIterable, Identifiable, Sendable {
     /// Muestra únicamente la cuota principal de 7 días (o la de 5h si el pool no tiene semanal).
     case weeklyOnly = "weeklyOnly"
-    /// Muestra la cuota principal de 7 días y la ventana secundaria de 5 horas (7d + 5h).
+    /// Muestra las ventanas de 5 horas y 7 días, en ese orden.
     case weeklyAndBurst = "weeklyAndBurst"
 
     public var id: String { rawValue }
@@ -62,17 +62,17 @@ public enum SummaryWindowMode: String, Codable, CaseIterable, Identifiable, Send
     }
 }
 
-/// Estilo de visualización cuando se muestran juntas la cuota de 7d (principal) y la ventana de 5h (secundaria).
+/// Estilo de visualización del resumen de 5h y 7d.
 public enum DualWindowLayoutStyle: String, Codable, CaseIterable, Identifiable, Sendable {
-    /// Opción 1: Dos líneas apiladas por cada pool (arriba 34% 7d, abajo 79% 5h).
+    /// Opción 1: Dos líneas apiladas por cada pool (arriba 79% 5h, abajo 34% 7d).
     case stackedTwoLines = "stackedTwoLines"
-    /// Opción 2A: En una línea con la 5h entre paréntesis: ✳︎ 34% (79% 5h) · ⬢ 78% (95% 5h).
+    /// Opción 2A: En una línea con la 7d entre paréntesis: ❋ 79% (34% 7d).
     case parentheses5h = "parentheses5h"
-    /// Opción 2B: En una línea con subíndices y barra vertical entre IAs: ✳︎ 34%₇𝒹 79%₅ₕ │ ⬢ 78%₇𝒹 95%₅ₕ.
+    /// Opción 2B: En una línea con subíndices y barra vertical entre IAs: ❋ 79%₅ₕ 34%₇𝒹 │ ⏣ 95%₅ₕ 78%₇𝒹.
     case subscripts = "subscripts"
-    /// Opción 3: Mini cápsulas (Pills) por IA: [ ✳︎ 34% · 79% ] [ ⬢ 78% · 95% ].
+    /// Opción 3: Mini cápsulas (Pills) por IA: [ ❋ 79% 5h · 34% 7d ].
     case capsulePills = "capsulePills"
-    /// Opción 4: En línea clásica con punto intermedio: ✳︎ 34% 7d · 79% 5h.
+    /// Opción 4: En línea clásica con punto intermedio: ❋ 79% 5h · 34% 7d.
     case inlineDot = "inlineDot"
 
     public var id: String { rawValue }
@@ -92,6 +92,8 @@ public struct ProviderSummaryTokens: Equatable, Sendable {
     public let weekly7dRemaining: Double?
     public let burst5hText: String?
     public let burst5hRemaining: Double?
+    public let burst5hIsShared: Bool
+    public let burst5hDetail: String?
     public let singleText: String
     public let statusRemainingPercent: Double
 
@@ -213,67 +215,63 @@ public struct QuotaPreferencesData: Codable, Equatable, Sendable {
         return selected.isEmpty ? Array(allPools.prefix(1)) : selected
     }
 
-    /// Devuelve un resumen estructurado por cada pool elegido del proveedor (7d principal, 5h secundaria).
+    /// Devuelve un resumen estructurado por cada pool elegido del proveedor (5h antes de 7d cuando se muestran ambas).
     public func summaryTokens(for snapshot: ProviderQuotaSnapshot, compactMenuBar: Bool = true) -> [ProviderSummaryTokens] {
         guard snapshot.authState == .authenticated else { return [] }
         let pools = menuBarPools(for: snapshot)
-        let showsCorePool = pools.contains { $0.category == .core }
-
         return pools.compactMap { pool in
             guard let primary = pool.primaryMetric else { return nil }
             let tag = pools.count > 1 ? ModelCatalog.pool(id: pool.id)?.menuBarTag : nil
-            // La 5h compartida con el Pool General no se repite si ese pool ya está en la barra.
-            let burst = pool.burst5hMetric ?? (showsCorePool ? nil : pool.sharedBurst5hMetric)
-            let isWeekly = primary.windowKind == .weekly7d
+            let burst = pool.effective5hMetric
+            let weekly = pool.weekly7dMetric
+            let isShared = pool.sharingArchitecture == .shared5hAndScopedWeekly
+            let burstDetail: String? = isShared ? L10n.shared5hNote(language)
+                : (pool.sharingArchitecture == .independentWeeklyOnly ? L10n.unlimited5h(language) : nil)
 
-            if summaryWindowMode == .weeklyAndBurst, let weekly = pool.weekly7dMetric, let burst {
-                let wStr = quotaDisplayMode.formatMenuBarPercent(remainingPercent: weekly.remainingPercent)
-                let bStr = quotaDisplayMode.formatMenuBarPercent(remainingPercent: burst.remainingPercent)
+            if summaryWindowMode == .weeklyAndBurst {
+                let wStr = weekly.map { quotaDisplayMode.formatMenuBarPercent(remainingPercent: $0.remainingPercent) } ?? "—"
+                let bStr = burst.map { quotaDisplayMode.formatMenuBarPercent(remainingPercent: $0.remainingPercent) }
+                    ?? (pool.sharingArchitecture == .independentWeeklyOnly ? "∞" : "—")
+                let link = isShared ? "↗" : ""
                 let formatted: String
                 switch dualWindowLayoutStyle {
-                case .stackedTwoLines, .inlineDot:
-                    formatted = "\(wStr) 7d · \(bStr) 5h"
+                case .stackedTwoLines, .inlineDot, .capsulePills:
+                    formatted = "\(bStr) 5h\(link) · \(wStr) 7d"
                 case .parentheses5h:
-                    formatted = "\(wStr) (\(bStr) 5h)"
+                    formatted = "\(bStr)\(link) (\(wStr) 7d)"
                 case .subscripts:
-                    formatted = "\(wStr)₇𝒹 \(bStr)₅ₕ"
-                case .capsulePills:
-                    formatted = "\(wStr) · \(bStr)"
+                    formatted = "\(bStr)₅ₕ\(link) \(wStr)₇𝒹"
                 }
                 return ProviderSummaryTokens(
                     provider: snapshot.provider,
                     poolId: pool.id,
                     tag: tag,
                     weekly7dText: wStr,
-                    weekly7dRemaining: weekly.remainingPercent,
+                    weekly7dRemaining: weekly?.remainingPercent,
                     burst5hText: bStr,
-                    burst5hRemaining: burst.remainingPercent,
+                    burst5hRemaining: burst?.remainingPercent,
+                    burst5hIsShared: isShared,
+                    burst5hDetail: burstDetail,
                     singleText: formatted,
-                    statusRemainingPercent: min(weekly.remainingPercent, burst.remainingPercent)
+                    statusRemainingPercent: [weekly?.remainingPercent, burst?.remainingPercent].compactMap { $0 }.min() ?? primary.remainingPercent
                 )
             }
 
-            let text: String
-            if summaryWindowMode == .weeklyAndBurst {
-                let pct = quotaDisplayMode.formatMenuBarPercent(remainingPercent: primary.remainingPercent)
-                if dualWindowLayoutStyle == .subscripts {
-                    text = pct + (isWeekly ? "₇𝒹" : "₅ₕ")
-                } else {
-                    text = pct + (isWeekly ? " 7d" : " 5h")
-                }
-            } else if compactMenuBar {
-                text = quotaDisplayMode.formatMenuBarPercent(remainingPercent: primary.remainingPercent)
-            } else {
-                text = quotaDisplayMode.format(metric: primary, compact: true, language: language)
-            }
+            let text = compactMenuBar
+                ? quotaDisplayMode.formatMenuBarPercent(remainingPercent: primary.remainingPercent)
+                : quotaDisplayMode.format(metric: primary, compact: true, language: language)
+            let isWeekly = primary.windowKind == .weekly7d
+            let percent = quotaDisplayMode.formatMenuBarPercent(remainingPercent: primary.remainingPercent)
             return ProviderSummaryTokens(
                 provider: snapshot.provider,
                 poolId: pool.id,
                 tag: tag,
-                weekly7dText: isWeekly ? text : nil,
+                weekly7dText: isWeekly ? percent : nil,
                 weekly7dRemaining: isWeekly ? primary.remainingPercent : nil,
-                burst5hText: isWeekly ? nil : text,
+                burst5hText: isWeekly ? nil : percent,
                 burst5hRemaining: isWeekly ? nil : primary.remainingPercent,
+                burst5hIsShared: isShared,
+                burst5hDetail: burstDetail,
                 singleText: text,
                 statusRemainingPercent: primary.remainingPercent
             )

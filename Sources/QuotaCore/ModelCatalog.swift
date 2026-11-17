@@ -5,10 +5,12 @@ public struct PoolDefinition: Identifiable, Equatable, Sendable {
     public let id: String
     public let provider: AIProviderKind
     public let category: QuotaPoolCategory
+    public let sharingArchitecture: PoolSharingArchitecture
     /// Nombre corto para etiquetas y opciones de configuración.
     public let shortName: String
     /// Modelos que consumen de este pool (se muestran como subtítulo).
     public let models: [String]
+    public let scopeDescription: String?
     /// Etiqueta en la barra superior cuando se muestra más de un pool del mismo proveedor (nil = sin etiqueta).
     public let menuBarTag: String?
     /// Textos que identifican al pool en ids, labels o nombres de grupo devueltos por la API.
@@ -22,6 +24,8 @@ public struct PoolDefinition: Identifiable, Equatable, Sendable {
         category: QuotaPoolCategory,
         shortName: String,
         models: [String],
+        scopeDescription: String? = nil,
+        sharingArchitecture: PoolSharingArchitecture = .standardDual,
         menuBarTag: String? = nil,
         matchKeywords: [String] = [],
         apiModelKeys: [String] = []
@@ -29,14 +33,16 @@ public struct PoolDefinition: Identifiable, Equatable, Sendable {
         self.id = id
         self.provider = provider
         self.category = category
+        self.sharingArchitecture = sharingArchitecture
         self.shortName = shortName
         self.models = models
+        self.scopeDescription = scopeDescription
         self.menuBarTag = menuBarTag
         self.matchKeywords = matchKeywords
         self.apiModelKeys = apiModelKeys
     }
 
-    public var subtitle: String { models.joined(separator: " · ") }
+    public var subtitle: String { scopeDescription ?? models.joined(separator: " · ") }
 
     public func matches(_ text: String) -> Bool {
         let lower = text.lowercased()
@@ -92,6 +98,7 @@ public enum ModelCatalog {
             category: .dedicated,
             shortName: "Fable",
             models: ["Claude Fable"],
+            sharingArchitecture: .shared5hAndScopedWeekly,
             menuBarTag: "F"
         ),
 
@@ -100,15 +107,18 @@ public enum ModelCatalog {
             id: "codex-general",
             provider: .codex,
             category: .core,
-            shortName: "GPT-5 · o3 · Codex CLI",
-            models: ["GPT-5", "o3", "Codex CLI"]
+            shortName: "Codex",
+            models: [],
+            scopeDescription: "Shared usage across Codex models"
         ),
         PoolDefinition(
             id: "codex-review",
             provider: .codex,
             category: .dedicated,
             shortName: "Code Review",
-            models: ["Code Review (PRs)"],
+            models: [],
+            scopeDescription: "GitHub pull request reviews",
+            sharingArchitecture: .independentWeeklyOnly,
             menuBarTag: "CR",
             matchKeywords: ["codex-review"]
         ),
@@ -134,6 +144,7 @@ public enum ModelCatalog {
             category: .dedicated,
             shortName: "Gemini 4 Argon · Orchestrator",
             models: ["Gemini 4 Argon (Low / Med / High)", "Orchestrator"],
+            sharingArchitecture: .independentWeeklyOnly,
             menuBarTag: "Ar",
             matchKeywords: ["argon", "orchestrator"],
             apiModelKeys: [
@@ -163,6 +174,13 @@ public enum ModelCatalog {
         pools.filter { $0.provider == provider }
     }
 
+    public static func selectablePools(for snapshot: ProviderQuotaSnapshot) -> [PoolDefinition] {
+        let definitions = pools(for: snapshot.provider)
+        guard snapshot.provider == .codex else { return definitions }
+        let reportedIds = Set(snapshot.metrics.map(\.poolId))
+        return definitions.filter { $0.category == .core || reportedIds.contains($0.id) }
+    }
+
     public static func pool(id: String) -> PoolDefinition? {
         pools.first { $0.id == id }
     }
@@ -176,6 +194,7 @@ public enum ModelCatalog {
             category: .dedicated,
             shortName: modelName,
             models: ["Claude \(modelName)"],
+            sharingArchitecture: .shared5hAndScopedWeekly,
             menuBarTag: String(modelName.prefix(1))
         )
     }

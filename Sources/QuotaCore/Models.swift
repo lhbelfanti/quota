@@ -23,6 +23,14 @@ public enum AIProviderKind: String, Codable, CaseIterable, Identifiable, Sendabl
         }
     }
 
+    public var menuBarSymbol: String {
+        switch self {
+        case .claude: return "❋"
+        case .codex: return "⏣"
+        case .gemini: return "✦"
+        }
+    }
+
     public var symbolName: String {
         switch self {
         case .claude: return "sparkles"
@@ -338,20 +346,10 @@ public struct ProviderQuotaSnapshot: Codable, Identifiable, Equatable, Sendable 
             let others = items.filter { $0.windowKind == .custom }
             let subtitle = items.compactMap(\.poolSubtitle).first ?? first.detail
 
-            let architecture: PoolSharingArchitecture
-            let shared5h: QuotaMetric?
-            if burst == nil && weekly != nil {
-                if provider == .claude && first.poolCategory == .dedicated {
-                    architecture = .shared5hAndScopedWeekly
-                    shared5h = coreBurst5h
-                } else {
-                    architecture = .independentWeeklyOnly
-                    shared5h = nil
-                }
-            } else {
-                architecture = .standardDual
-                shared5h = nil
-            }
+            let configuredArchitecture = ModelCatalog.pool(id: pid)?.sharingArchitecture
+                ?? (provider == .claude && first.poolCategory == .dedicated ? .shared5hAndScopedWeekly : .standardDual)
+            let architecture: PoolSharingArchitecture = burst == nil ? configuredArchitecture : .standardDual
+            let shared5h = architecture == .shared5hAndScopedWeekly ? coreBurst5h : nil
 
             return QuotaPoolGroup(
                 id: pid,
