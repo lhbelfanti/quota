@@ -250,18 +250,50 @@ enum QuotaCoreTestRunner {
             precondition(QuotaDisplayMode.both.format(metric: m, language: .es) == "84% disp. · 16% usado", "Expected 84% disp. · 16% usado")
             precondition(QuotaDisplayMode.both.formatMenuBarPercent(remainingPercent: 84) == "84% (16%u)", "Expected 84% (16%u) in menu bar for .both")
 
-            let prefs5h = QuotaPreferencesData(summaryWindowMode: .fiveHourOnly)
-            let prefs5hAnd7dInline = QuotaPreferencesData(summaryWindowMode: .fiveHourAndSevenDay, dualWindowLayoutStyle: .inlineDot)
-            let prefs5hAnd7dParen = QuotaPreferencesData(summaryWindowMode: .fiveHourAndSevenDay, dualWindowLayoutStyle: .parentheses7d)
-            let prefs5hAnd7dSub = QuotaPreferencesData(summaryWindowMode: .fiveHourAndSevenDay, dualWindowLayoutStyle: .subscripts)
-            let prefs5hAnd7dPills = QuotaPreferencesData(summaryWindowMode: .fiveHourAndSevenDay, dualWindowLayoutStyle: .capsulePills)
-            let prefsPartner = QuotaPreferencesData(summaryWindowMode: .fiveHourAndSevenDay, dualWindowLayoutStyle: .inlineDot, preferredPoolByProvider: ["gemini": .partner])
-            precondition(prefs5h.formatProviderSummary(snapshot: agySnap, compactMenuBar: true)?.text == "84%", "Expected 84% for Gemini Pool General in 5h-only mode")
-            precondition(prefs5hAnd7dInline.formatProviderSummary(snapshot: agySnap, compactMenuBar: true)?.text == "84% 5h · 60% 7d", "Expected 84% 5h · 60% 7d for inlineDot mode")
-            precondition(prefs5hAnd7dParen.formatProviderSummary(snapshot: agySnap, compactMenuBar: true)?.text == "84% (60% 7d)", "Expected 84% (60% 7d) for parentheses7d mode")
-            precondition(prefs5hAnd7dSub.formatProviderSummary(snapshot: agySnap, compactMenuBar: true)?.text == "84%₅ₕ 60%₇𝒹", "Expected 84%₅ₕ 60%₇𝒹 for subscripts mode")
-            precondition(prefs5hAnd7dPills.formatProviderSummary(snapshot: agySnap, compactMenuBar: true)?.text == "84% · 60%", "Expected 84% · 60% for capsulePills mode")
-            precondition(prefsPartner.formatProviderSummary(snapshot: agySnap, compactMenuBar: true)?.text == "95% 5h · 100% 7d", "Expected 95% 5h · 100% 7d when Pool de Partners is selected for Gemini")
+            func summary(_ prefs: QuotaPreferencesData, _ snap: ProviderQuotaSnapshot) -> String? {
+                prefs.formatProviderSummary(snapshot: snap, compactMenuBar: true)?.text
+            }
+            func dual(_ style: DualWindowLayoutStyle, pools: [String: [String]] = [:]) -> QuotaPreferencesData {
+                QuotaPreferencesData(summaryWindowMode: .weeklyAndBurst, dualWindowLayoutStyle: style, menuBarPoolsByProvider: pools)
+            }
+            precondition(agyPools[0].primaryMetric?.windowKind == .weekly7d, "Expected 7d to be the primary metric of a dual pool")
+            precondition(summary(QuotaPreferencesData(), agySnap) == "60%", "Expected the 7d quota (60%) by default")
+            precondition(summary(dual(.inlineDot), agySnap) == "60% 7d · 84% 5h", "Expected 7d first for inlineDot mode")
+            precondition(summary(dual(.parentheses5h), agySnap) == "60% (84% 5h)", "Expected 5h in parentheses")
+            precondition(summary(dual(.subscripts), agySnap) == "60%₇𝒹 84%₅ₕ", "Expected 7d first for subscripts mode")
+            precondition(summary(dual(.capsulePills), agySnap) == "60% · 84%", "Expected 7d first for capsulePills mode")
+            precondition(summary(dual(.inlineDot, pools: ["gemini": ["agy-3p"]]), agySnap) == "100% 7d · 95% 5h", "Expected Pool de Partners when selected for Gemini")
+
+            // Varios pools por proveedor en la barra superior
+            let multiGemini = QuotaPreferencesData(menuBarPoolsByProvider: ["gemini": ["agy-argon", "agy-gemini"]])
+            precondition(summary(multiGemini, agySnap) == "60% Ar 50%", "Expected General + Argon in catalog order with the Argon tag")
+            precondition(multiGemini.formatProviderSummary(snapshot: agySnap, compactMenuBar: true)?.statusRemainingPercent == agyMetrics[2].remainingPercent, "Expected status to follow the lowest selected pool")
+
+            let claudeSnap = ProviderQuotaSnapshot(
+                provider: .claude,
+                authState: .authenticated,
+                metrics: [
+                    ModelCatalog.pool(id: "claude-general")!.metric(id: "claude-5h", window: .burst5h, usedPercent: 13),
+                    ModelCatalog.pool(id: "claude-general")!.metric(id: "claude-7d", window: .weekly7d, usedPercent: 30),
+                    ModelCatalog.claudeScopedPool(named: "Fable").metric(id: "claude-scoped-fable", window: .weekly7d, usedPercent: 8)
+                ]
+            )
+            let claudeBoth = ["claude": ["claude-general", "claude-fable"]]
+            precondition(summary(dual(.parentheses5h, pools: claudeBoth), claudeSnap) == "70% (87% 5h) F 92% 7d", "Expected shared 5h shown once when General + Fable are selected")
+            precondition(summary(dual(.parentheses5h, pools: ["claude": ["claude-fable"]]), claudeSnap) == "92% (87% 5h)", "Expected Fable alone to show the shared 5h")
+
+            // Preferencias guardadas por versiones anteriores
+            let legacyJSON = """
+            {"summaryWindowMode": "fiveHourAndSevenDay", "dualWindowLayoutStyle": "parentheses7d", "preferredPoolByProvider": {"gemini": "partner"}}
+            """.data(using: .utf8)!
+            let legacy = try JSONDecoder().decode(QuotaPreferencesData.self, from: legacyJSON)
+            precondition(legacy.summaryWindowMode == .weeklyAndBurst && legacy.dualWindowLayoutStyle == .parentheses5h, "Expected legacy window settings to migrate")
+            precondition(legacy.menuBarPoolIds(for: .gemini) == ["agy-3p"], "Expected legacy pool category to migrate to a pool id")
+            precondition(legacy.menuBarPoolIds(for: .claude) == ["claude-general"], "Expected General pool by default")
+
+            // Inferencia de pool desde el catálogo (snapshots cacheados sin datos de pool)
+            precondition(QuotaMetric(id: "agy-argon-pool", label: "x (7d)", usedPercent: 1).poolId == "agy-argon", "Expected Argon pool inferred from catalog keywords")
+            precondition(QuotaMetric(id: "codex-secondary", label: "x", usedPercent: 1).poolSubtitle == ModelCatalog.pool(id: "codex-general")?.subtitle, "Expected Codex subtitle from catalog")
 
             precondition(L10n.generalPoolTitle(.de) == "Allgemeiner Pool", "Expected German translation for General Pool")
             precondition(L10n.exclusivePoolTitle(.es) == "Pool Exclusivo", "Expected Spanish translation for Exclusive Pool")
