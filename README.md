@@ -16,7 +16,7 @@
 
 **Quota** (`AIQuota`) is a native macOS application and WidgetKit extension written in **Swift / SwiftUI** that monitors real-time remaining and used quota across **Anthropic Claude Code**, **OpenAI Codex (ChatGPT)**, and **Google Gemini / Antigravity (`agy`)**.
 
-It groups limits into logical **Quota Pools** (`CORE`, `DEDICATED`, and `PARTNER`) and visually separates the **5-hour active session** (primary continuous gauge) from the **7-day weekly budget** (continuous bar divided into 5 quintiles at `20%`, `40%`, `60%`, and `80%`).
+It groups limits into logical **Quota Pools** (`CORE`, `DEDICATED`, and `PARTNER`) and shows the **7-day weekly budget** as the primary quota (continuous bar divided into 5 quintiles at `20%`, `40%`, `60%`, and `80%`) with the **5-hour active session** nested under it as the secondary quota.
 
 ## Preview
 
@@ -48,8 +48,10 @@ Addable directly from **Right-click Desktop → `Edit Widgets...` → `AIQuota`*
 
 1. **Menu Bar App (`MenuBarExtra`)**:
    - Displays live percentages in the macOS top bar with customizable display formats: AI logos + percentage, compact initials (`C · X · G`), full names, lowest quota only, or icon only.
+   - Each provider can show one or more pools in the top bar (for example Claude `General Pool` + `Fable`). Extra pools carry a short tag: `✳︎ 70% F 92%`.
    - Expandable popover showing per-provider cards, subscription tiers (`PRO`, `PLUS`, `AI PRO`, `AI ULTRA`), and reset countdowns (`↻ Xh Ym`).
-2. **Quota Pools & Window Hierarchy (`5h` vs `7d`)**:
+2. **Quota Pools & Window Hierarchy (`7d` primary, `5h` secondary)**:
+   - Pools and their models are declared in one place, `Sources/QuotaCore/ModelCatalog.swift`. Edit that list when a provider changes its models.
    - **Claude**: `General Pool` (`5h` active session + `7d` weekly budget) and dedicated model pools (`Pool Fable`, `Pool Opus`).
    - **Codex**: `General Pool` (`5h` active session + `7d` weekly budget) and `Pool Code Review`.
    - **Gemini / Antigravity (`agy`)**:
