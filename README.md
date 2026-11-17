@@ -25,7 +25,7 @@ These transparent PNG previews use sample data.
 ### Menu bar status and popover dashboard
 
 <p align="center">
-  <img src="./media/menubar-status.png" width="640" alt="Menu Bar status indicator" />
+  <img src="./media/menubar-status-pills.png" width="640" alt="Menu Bar status indicator" />
 </p>
 
 <p align="center">
