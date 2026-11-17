@@ -20,14 +20,16 @@ It groups limits into logical **Quota Pools** (`CORE`, `DEDICATED`, and `PARTNER
 
 ## Preview
 
-### Menu Bar Status & Popover Dashboard
+These transparent PNG previews use sample data.
+
+### Menu bar status and popover dashboard
 
 <p align="center">
-  <img src="./media/menubar-status.png" width="320" alt="Menu Bar status indicator" />
+  <img src="./media/menubar-status.png" width="640" alt="Menu Bar status indicator" />
 </p>
 
 <p align="center">
-  <img src="./media/menubar-popover.jpg" width="430" alt="Menu Bar popover dashboard" />
+  <img src="./media/menubar-popover.png" width="430" alt="Menu Bar popover dashboard" />
 </p>
 
 ### Native macOS Desktop Widgets (`WidgetKit`)
@@ -35,7 +37,7 @@ It groups limits into logical **Quota Pools** (`CORE`, `DEDICATED`, and `PARTNER
 Addable directly from **Right-click Desktop → `Edit Widgets...` → `AIQuota`** in *Large*, *Medium*, and *Small* sizes, featuring an interactive refresh button next to the timestamp:
 
 <p align="center">
-  <img src="./media/widget-large.jpg" width="430" alt="Large Desktop Widget" />
+  <img src="./media/widget-large.png" width="430" alt="Large Desktop Widget" />
 </p>
 
 <p align="center">
@@ -48,12 +50,15 @@ Addable directly from **Right-click Desktop → `Edit Widgets...` → `AIQuota`*
 
 1. **Menu Bar App (`MenuBarExtra`)**:
    - Displays live percentages in the macOS top bar with customizable display formats: AI logos + percentage, compact initials (`C · X · G`), full names, lowest quota only, or icon only.
-   - Each provider can show one or more pools in the top bar (for example Claude `General Pool` + `Fable`). Extra pools carry a short tag: `✳︎ 70% F 92%`.
-   - Expandable popover showing per-provider cards, subscription tiers (`PRO`, `PLUS`, `AI PRO`, `AI ULTRA`), and reset countdowns (`↻ Xh Ym`).
+   - Each provider can show one or more pools in the top bar (for example Claude `General Pool` + `Fable`). Pills separate pools with short tags: `❋ G 88% 5h · 76% 7d | F 88% 5h↗ · 92% 7d`.
+   - Expandable popover showing per-provider cards, subscription tiers (`PRO`, `PLUS`, `AI PRO`, `AI ULTRA`), and reset countdown badges (`↻ Xh Ym`).
+   - Dual-window summaries show both windows for every pool. `↗` marks a 5h quota shared with the General Pool, `∞` means no 5h limit, and `—` means the data is unavailable.
+   - Percentages and bars share a continuous color scale from red at 0% remaining to green at 100%. Provider colors identify the cards and pill outlines. Solid pill backgrounds keep the values readable over desktop wallpapers. Pool category tags use the same colors across providers.
+   - Provider images appear in the dashboard, settings, and desktop widgets. Compact top-bar symbols are `❋` for Claude, `⏣` for Codex, and `✦` for Gemini.
 2. **Quota Pools & Window Hierarchy (`7d` primary, `5h` secondary)**:
    - Pools and their models are declared in one place, `Sources/QuotaCore/ModelCatalog.swift`. Edit that list when a provider changes its models.
    - **Claude**: `General Pool` (`5h` active session + `7d` weekly budget) and dedicated model pools (`Pool Fable`, `Pool Opus`).
-   - **Codex**: `General Pool` (`5h` active session + `7d` weekly budget) and `Pool Code Review`.
+   - **Codex**: `General Pool` (`5h` active session + `7d` weekly budget) shows shared Codex usage. The usage response does not identify the models that consume this allowance. A separate GitHub code review quota appears in settings only when the API reports it.
    - **Gemini / Antigravity (`agy`)**:
      - `Pool Gemini 4 Argon` (`DEDICATED` · independent 7-day weekly limit for Argon and Orchestrator).
      - `General Pool` (`CORE` · shared `5h` and `7d` limits for Gemini 4 Hydrogen, 3.8 Flash, and 2.5 Pro).
@@ -86,6 +91,16 @@ Addable directly from **Right-click Desktop → `Edit Widgets...` → `AIQuota`*
    ```bash
    open /Applications/AIQuota.app
    ```
+
+### Regenerate preview images
+
+Run the preview renderer to replace the five PNG files in `media/` with images of the current views:
+
+```bash
+bash scripts/render-previews.sh
+```
+
+The renderer uses sample data without reading account credentials or changing saved preferences.
 
 ### CLI Status & Tests
 
