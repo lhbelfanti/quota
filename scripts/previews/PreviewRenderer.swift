@@ -35,7 +35,7 @@ struct PreviewRenderer {
         try render(
             RichMenuBarStatusCanvas(groups: groups, menuBarStyle: .logosAndPercentages, dualLayoutStyle: .capsulePills)
                 .padding(8),
-            to: media.appendingPathComponent("menubar-status.png")
+            to: media.appendingPathComponent("menubar-status-pills.png")
         )
 
         let entry = QuotaTimelineEntry(date: now, dashboard: dashboard, preferences: preferences)
