@@ -92,6 +92,23 @@ Addable directly from **Right-click Desktop → `Edit Widgets...` → `AIQuota`*
    open /Applications/AIQuota.app
    ```
 
+### Resolve a Swift compiler and SDK mismatch
+
+The build script resolves the Swift compiler and macOS SDK with `xcrun` using
+`DEVELOPER_DIR`, or the active `xcode-select` directory when that variable is unset.
+It checks framework imports before replacing the build bundle.
+
+If the build reports `This SDK is not supported by the compiler`, update your
+Command Line Tools or select a compatible Xcode installation. For Xcode installed
+at `/Applications/Xcode.app`, run:
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer ./scripts/build-app.sh
+```
+
+Adjust the path if you installed Xcode elsewhere. This override applies only to
+this command. Launch the app after the build succeeds.
+
 ### Regenerate preview images
 
 Run the preview renderer to replace the five PNG files in `media/` with images of the current views:
