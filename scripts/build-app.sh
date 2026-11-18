@@ -5,9 +5,34 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="$ROOT_DIR/build"
 APP_BUNDLE="$BUILD_DIR/AIQuota.app"
 WIDGET_BUNDLE="$APP_BUNDLE/Contents/PlugIns/AIQuotaWidgetExtension.appex"
-SDK="$(xcrun --show-sdk-path)"
+export DEVELOPER_DIR="${DEVELOPER_DIR:-$(xcode-select -p)}"
+SWIFTC="$(xcrun --sdk macosx --find swiftc)"
+SDK="$(xcrun --sdk macosx --show-sdk-path)"
 ARCH="$(uname -m)"
 TARGET="${ARCH}-apple-macosx14.0"
+
+echo "==> Verificando el compilador Swift y el SDK de macOS..."
+if ! DIAGNOSTICS="$("$SWIFTC" -sdk "$SDK" -target "$TARGET" -typecheck - 2>&1 <<'SWIFT'
+import Foundation
+import SwiftUI
+import WidgetKit
+import AppIntents
+SWIFT
+)"; then
+    printf '%s\n' "$DIAGNOSTICS" >&2
+    cat >&2 <<EOF
+Error: falló la comprobación del compilador Swift y el SDK de macOS.
+Directorio de desarrollo: $DEVELOPER_DIR
+Compilador: $SWIFTC
+SDK: $SDK
+
+Si el diagnóstico indica "This SDK is not supported by the compiler", actualizá
+las Command Line Tools o seleccioná una instalación compatible de Xcode.
+Si Xcode está instalado en /Applications/Xcode.app, ejecutá:
+  DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer ./scripts/build-app.sh
+EOF
+    exit 1
+fi
 
 echo "==> Compilando AIQuota para $TARGET..."
 mkdir -p "$BUILD_DIR"
@@ -32,13 +57,13 @@ cp -R "$ROOT_DIR/Sources/QuotaCore/Resources/ProviderLogos" "$APP_BUNDLE/Content
 cp -R "$ROOT_DIR/Sources/QuotaCore/Resources/ProviderLogos" "$WIDGET_BUNDLE/Contents/Resources/"
 
 # 1. Compilar la aplicación principal (Menu Bar)
-swiftc -sdk "$SDK" -target "$TARGET" -O -whole-module-optimization \
+"$SWIFTC" -sdk "$SDK" -target "$TARGET" -O -whole-module-optimization \
   "$ROOT_DIR"/Sources/QuotaCore/*.swift \
   "$ROOT_DIR"/Sources/AIQuotaApp/*.swift \
   -o "$APP_BUNDLE/Contents/MacOS/AIQuotaApp"
 
 # 2. Compilar la extensión nativa WidgetKit (.appex)
-swiftc -sdk "$SDK" -target "$TARGET" -O -whole-module-optimization \
+"$SWIFTC" -sdk "$SDK" -target "$TARGET" -O -whole-module-optimization \
   -Xlinker -e -Xlinker _NSExtensionMain \
   "$ROOT_DIR"/Sources/QuotaCore/*.swift \
   "$ROOT_DIR"/Sources/AIQuotaWidget/*.swift \
